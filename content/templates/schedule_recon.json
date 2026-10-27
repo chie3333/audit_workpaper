@@ -1,0 +1,180 @@
+{
+  "id": "schedule_recon",
+  "version": "0.1.0",
+  "title": "명세서 계산검증 및 보조부 대사",
+  "_comment": "공통 절차 템플릿. 계정별 설정(bindings)이 자료명·추가 열·계정 안내를 채운다. calc·check·component 식별자는 코드(app/engine.py)에 있는 것만 쓸 수 있다.",
+  "steps": [
+    {
+      "id": "purpose",
+      "title": "목적과 범위",
+      "components": [
+        {"type": "fields", "fields": [
+          {"key": "wp_no", "label": "조서번호", "type": "text", "required": true},
+          {"key": "as_of_date", "label": "대상일(기준일)", "type": "date", "required": true},
+          {"key": "purpose", "label": "이 절차의 목적", "type": "textarea", "required": true},
+          {"key": "scope", "label": "검사 범위", "type": "textarea", "required": true,
+           "help": "대상 계정·자료 범위와, 이 절차로 결론내지 않는 범위를 함께 적는다."},
+          {"key": "risk_ref", "label": "관련 위험·계획 조서 참조", "type": "text"},
+          {"key": "materiality_ref", "label": "중요성 참조", "type": "text", "help": "중요성 금액은 이 조서에서 정하지 않는다. 계획 조서의 위치만 참조한다."},
+          {"key": "related_wps", "label": "관련 조서 참조", "type": "textarea",
+           "help": "같은 계정에서 다른 주장을 다루는 조서(실사, 금융기관 조회 등)의 조서번호와 확인 범위"}
+        ]},
+        {"type": "assertions"}
+      ],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["FORM4000:A!A17", "FORM4000:A!A18", "KSA2026:330.20"],
+         "text": "명세서는 회사가 작성한 자료다. 금액이 산술적으로 맞는지, 회계기록(보조부·총계정원장)과 일치하는지 확인한다. 결산절차 관련 실증절차에는 재무제표 정보와 기초 회계기록의 일치 확인·차이 조정이 포함된다."},
+        {"kind": "where", "type": "보완 설명", "refs": [],
+         "text": "계획 단계 조서(위험평가, 중요성)에서 이 계정에 대해 정한 위험과 대응 절차를 찾아 조서번호를 확인한다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["KSA2026:330.28"],
+         "text": "이 절차가 대응하는 평가된 위험을 참조로 연결한다. 위험평가 자체는 이 도구의 범위가 아니므로 입력·참조만 한다."},
+        {"kind": "record", "type": "보완 설명", "refs": [],
+         "text": "대상일, 대상 계정 범위, 적용한 경영진 주장, 참조 조서번호를 적는다. 이 절차로 결론내지 않는 범위(예: 다른 절차가 다루는 주장)도 검사 범위에 남긴다."}
+      ]
+    },
+    {
+      "id": "materials",
+      "title": "자료 준비·확인",
+      "components": [{"type": "materials"}],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["KSA2026:500.9", "KSA2026:500.5"],
+         "text": "명세서는 기업이 생산한 정보이므로 정확성과 완전성에 대한 증거가 필요하다. 보조원장과 총계정원장은 회계기록에 해당한다."},
+        {"kind": "where", "type": "보완 설명", "refs": [],
+         "text": "명세서의 기준일·작성자·항목 목록·합계 행, 보조부의 항목별 기말잔액, 총계정원장의 해당 계정 기말잔액을 확인한다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["KSA2026:500.7", "KSA2026:500.A61"],
+         "text": "자료의 관련성과 신뢰성을 고려한다. 정확성·완전성 확인은 다음 단계의 계산검증·대사와 함께 수행하고 기록할 수 있다."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "기준일이 대상일과 같은지, 단위·통화가 같은지, 회사가 수정한 자료라면 원본과 무엇이 바뀌었는지 확인한다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.9"],
+         "text": "자료명·버전·제공자·입수일·기준일·위치를 남긴다. 자료를 등록한 것과 증거로 확인한 것(확인자·확인일·확인 범위)을 구분한다."}
+      ]
+    },
+    {
+      "id": "recon",
+      "title": "계산검증·대사",
+      "components": [
+        {"type": "recon"},
+        {"type": "fields", "fields": [
+          {"key": "list_check", "label": "명세서·보조부 항목 목록 양방향 대조", "type": "choice",
+           "options": ["미수행", "수행 - 누락·추가 없음", "수행 - 누락·추가 있음"], "required": true},
+          {"key": "list_check_note", "label": "목록 대조 방법과 결과", "type": "textarea",
+           "show_if": {"field": "list_check", "in": ["수행 - 누락·추가 없음", "수행 - 누락·추가 있음"]}, "required": true}
+        ]},
+        {"type": "scan"}
+      ],
+      "calcs": ["row_diff", "recalc_total", "stated_vs_recalc", "subledger_total", "subledger_vs_gl"],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["FORM4000:A!A18"],
+         "text": "명세서를 입수하여 금액을 계산검증하고 보조부와 대조 확인한다."},
+        {"kind": "where", "type": "보완 설명", "refs": [],
+         "text": "명세서의 행별 금액과 표시 합계, 보조부의 같은 항목 잔액, 총계정원장의 해당 계정 잔액."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "① 명세서 행별 금액을 다시 합산해 표시 합계와 비교한다. ② 항목별로 명세서 금액과 보조부 금액을 비교한다. ③ 보조부 합계를 총계정원장 잔액과 비교한다. ④ 보조부에만 있거나 명세서에만 있는 항목이 없는지 양방향으로 대조한다."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "확인하지 않은 금액은 비워 둔다. 빈칸은 0원으로 계산하지 않으며, 빈칸이 있으면 합계와 차이를 계산하지 않는다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.9"],
+         "text": "테스트한 항목의 식별 특성(항목 식별값)과 근거 위치(파일·시트·셀·행·페이지)를 행마다 남긴다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["FORM4000:A!A19"], "scope": "scan",
+         "text": "(선택 단계) 명세서를 스캔하여 유의적이거나 비경상적인 항목을 검토한다."},
+        {"kind": "how", "type": "보완 설명", "refs": [], "unverified": true, "scope": "scan",
+         "text": "(선택 단계) 무엇을 비경상적으로 볼지는 감사인이 정한다. 이 도구는 기준 금액을 정하지 않으며, 표시한 항목마다 이유를 기록하게 한다."}
+      ]
+    },
+    {
+      "id": "findings",
+      "title": "차이·예외 조사",
+      "components": [{"type": "findings"}],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["KSA2026:500.11"],
+         "text": "서로 다른 원천의 정보가 일치하지 않으면, 이를 해결하기 위해 감사절차를 바꾸거나 추가할지 결정해야 한다."},
+        {"kind": "where", "type": "보완 설명", "refs": [],
+         "text": "차이가 난 항목의 보조부 거래 내역, 명세서 작성 근거, 회사 담당자의 설명과 그 설명을 뒷받침하는 자료."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "차이의 사실(금액·항목)을 먼저 기록하고, 원인을 확인할 자료를 요청한 뒤, 받은 자료로 다시 확인한다. 금액 차이가 없어도 다른 예외는 직접 추가한다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["KSA2026:230.10", "KSA2026:230.A5"],
+         "text": "담당자와 토의했다면 내용·시기·상대자를 기록한다. 구두 설명 자체는 적절한 근거가 되지 못하므로, 설명만 받은 경우와 자료로 다시 확인한 경우를 구분한다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.11"],
+         "text": "결론과 일관되지 않은 정보를 발견했다면 어떻게 처리했는지 기록한다."}
+      ]
+    },
+    {
+      "id": "conclusion",
+      "title": "수행 기록·결론",
+      "components": [
+        {"type": "fields", "fields": [
+          {"key": "work_performed", "label": "실제 수행 내역", "type": "textarea", "required": true,
+           "help": "어떤 자료의 어디를 무엇과 어떻게 비교했는지. 예시 문장을 그대로 옮기지 않는다."},
+          {"key": "recon_result", "label": "이번 조서의 대사 결과", "type": "textarea", "required": true},
+          {"key": "fs_link_status", "label": "재무제표 정보와 회계기록의 연결", "type": "choice", "required": true,
+           "options": ["일치 확인", "조정 후 확인", "확인 중", "별도 조서 참조", "미수행"]},
+          {"key": "fs_link_ref", "label": "참조 조서번호", "type": "text", "required": true,
+           "show_if": {"field": "fs_link_status", "eq": "별도 조서 참조"}},
+          {"key": "fs_link_basis", "label": "연결 근거(재무제표 항목, 대응 회계기록, 조정 내역, 근거 위치)", "type": "textarea", "required": true,
+           "show_if": {"field": "fs_link_status", "in": ["일치 확인", "조정 후 확인", "별도 조서 참조"]}},
+          {"key": "fs_link_statement", "label": "명시 문장(직접 작성)", "type": "textarea", "required": true,
+           "show_if": {"field": "fs_link_status", "in": ["일치 확인", "조정 후 확인", "별도 조서 참조"]},
+           "help": "어떤 재무제표 정보가 어떤 회계기록과 일치 또는 조정되었는지, 근거와 범위를 포함해 적는다. 수행하지 않았으면 이 문장을 쓰지 않는다."},
+          {"key": "conclusion", "label": "결론", "type": "textarea", "required": true}
+        ]},
+        {"type": "open_items"}
+      ],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["KSA2026:330.30"],
+         "text": "재무제표의 정보가 기초 회계기록과 일치하거나 조정되었다는 것을 감사문서에 명시해야 한다."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "명세서·보조부·총계정원장이 일치했다는 결과와, 재무제표 정보와 회계기록의 연결을 확인했다는 결과를 구분해 적는다. 연결을 확인하지 않았다면 '미수행' 또는 '확인 중'으로 남긴다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:330.28"],
+         "text": "절차의 결과와, 결과만으로 분명하지 않은 경우 결론을 기록한다. 아래 남은 작업 목록은 결론과 출력물에 그대로 표시된다."},
+        {"kind": "example", "type": "가상 예시", "refs": [],
+         "text": "[대사 결과 예시] 명세서 행별 금액 재계산 결과 20,400,000원으로 표시 합계 20,500,000원과 100,000원 차이가 있었다. 항목 K01에서 명세서 12,400,000원, 보조부 12,500,000원으로 100,000원 차이를 확인하였다. 보조부 합계 20,500,000원은 총계정원장 잔액과 일치하였다."},
+        {"kind": "example", "type": "가상 예시", "refs": [],
+         "text": "[명시 문장 틀] [재무제표 항목·범위]를 [회계기록·근거 위치]와 대사하여 [일치 / 조정 내역]을 확인하였다. 관련 수행 기록은 [이 조서의 작업 또는 참조 조서번호]에 기재하였다."}
+      ]
+    },
+    {
+      "id": "review",
+      "title": "검토·출력",
+      "components": [
+        {"type": "fields", "fields": [
+          {"key": "procedure_status", "label": "절차 수행 상태", "type": "choice", "required": true,
+           "options": ["미착수", "진행 중", "수행 완료", "해당 없음", "대체절차 수행"]},
+          {"key": "na_reason", "label": "해당 없음 사유", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "해당 없음"}},
+          {"key": "alt_procedure", "label": "수행한 대체절차", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "대체절차 수행"}},
+          {"key": "alt_how", "label": "대체절차가 목적을 달성한 방법", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "대체절차 수행"}},
+          {"key": "deviation_reason", "label": "이탈 이유", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "대체절차 수행"}},
+          {"key": "performer", "label": "수행자", "type": "text", "required": true},
+          {"key": "performed_date", "label": "수행 종료일", "type": "date", "required": true},
+          {"key": "review_status", "label": "검토 상태", "type": "choice", "required": true,
+           "options": ["미검토", "검토 중", "의견 처리 중", "검토 완료"]},
+          {"key": "reviewer", "label": "검토자", "type": "text",
+           "show_if": {"field": "review_status", "in": ["검토 중", "의견 처리 중", "검토 완료"]}},
+          {"key": "review_date", "label": "검토일", "type": "date",
+           "show_if": {"field": "review_status", "in": ["검토 중", "의견 처리 중", "검토 완료"]}},
+          {"key": "review_scope", "label": "검토 범위", "type": "textarea",
+           "show_if": {"field": "review_status", "in": ["검토 중", "의견 처리 중", "검토 완료"]}}
+        ]},
+        {"type": "review_comments"}
+      ],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["KSA2026:230.9"],
+         "text": "감사업무의 수행자와 종료일, 검토한 사람·검토일·검토 범위를 기록해야 한다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["KSA2026:230.12"],
+         "text": "요구사항에서 이탈해 다른 절차를 수행했다면, 그 대체절차가 목적을 어떻게 달성했는지와 이탈 이유를 기록한다. 적용 조건이 없어 수행하지 않은 '해당 없음'과 구분한다."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "수행 완료, 발견 사항 처리, 검토 완료는 서로 다른 상태다. 엑셀을 내려받아도 검토 완료로 바뀌지 않는다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.A4"],
+         "text": "교체 전 초안은 감사문서에 포함할 필요가 없다. 엑셀은 선택한 저장본 기준으로 만들고, 저장 이력 전체를 나열하지 않는다."}
+      ]
+    }
+  ],
+  "checks": [
+    "required_fields", "materials_status", "materials_confirmed", "recon_blanks", "diff_without_finding",
+    "list_check_finding", "findings_open", "findings_resolution", "findings_explanation_only",
+    "assertion_change_reason", "scan_undecided", "review_state", "status_consistency"
+  ],
+  "export": {"detail_sheet_row_threshold": 30}
+}

@@ -1,0 +1,183 @@
+"""가상 사례 3종 (정상 / 차이 / 자료 부족).
+
+전부 가상 데이터다. 회사·금융기관·계좌·금액·사람은 실재하지 않으며 실제 감사 수행 기록이 아니다.
+화면과 엑셀에는 '가상 데이터'로 표시된다.
+"""
+from __future__ import annotations
+
+import copy
+
+from . import content as content_mod
+from . import records
+
+PERIOD = "2025-12-31"
+BINDING = "cash.schedule_recon"
+
+
+def _mat(mid, role, name, version, kind="원본", original_id="", receipt="입수", received="2026-01-20",
+         confirmed=True, scope="", remaining=""):
+    return {"id": mid, "role": role, "name": name, "version_label": version, "kind": kind, "original_id": original_id,
+            "provider": "회사 자금팀(가상)", "receipt": receipt, "requested_date": "2026-01-15",
+            "received_date": received if receipt == "입수" else "", "as_of_date": PERIOD,
+            "location": f"{name}.xlsx", "remaining_work": remaining, "confirmed": confirmed and receipt == "입수",
+            "confirmed_by": "작성자" if confirmed and receipt == "입수" else "", "confirmed_date": "2026-01-21" if confirmed and receipt == "입수" else "",
+            "confirmed_scope": scope if confirmed and receipt == "입수" else "", "note": ""}
+
+
+def _row(rid, item, bank, product, sched, sub, sloc, bloc, note=""):
+    return {"id": rid, "item_id": item, "name": bank, "product_type": product, "schedule_amount": sched,
+            "subledger_amount": sub, "schedule_loc": sloc, "subledger_loc": bloc, "note": note,
+            "unusual": False, "unusual_reason": ""}
+
+
+def _base(resolved):
+    d = records.default_data(resolved, PERIOD)
+    d["recon"]["sets"][0]["id"] = "s_orig"
+    return d
+
+
+COMMON_FIELDS = {
+    "purpose": "현금및현금성자산·장단기금융상품 명세서가 산술적으로 정확하고 예금별 보조원장 및 총계정원장과 일치하는지 확인한다. (가상 사례)",
+    "scope": "2025-12-31 현재 명세서 전체 항목. 실재성은 이 조서에서 결론내지 않으며 A-300 실사, A-400 금융기관 조회 조서에서 다룬다. (가상)",
+    "risk_ref": "2302 위험평가 조서 현금 항목 (가상 참조)",
+    "related_wps": "A-300 현금 실사, A-400 금융기관 조회 (가상 참조)",
+}
+
+
+def normal(resolved):
+    d = _base(resolved)
+    d["fields"].update(COMMON_FIELDS)
+    d["fields"].update({
+        "wp_no": "A-200",
+        "list_check": "수행 - 누락·추가 없음",
+        "list_check_note": "보조원장의 계좌 목록 2건과 명세서 항목 2건을 양방향으로 대조함. 한쪽에만 있는 계좌 없음.",
+        "work_performed": "명세서 행별 금액을 재계산하여 표시 합계와 비교하고, 계좌별 금액을 예금별 보조원장 기말잔액과 대사함. 보조원장 합계를 총계정원장 현금및현금성자산 잔액과 비교함.",
+        "recon_result": "명세서 재계산 합계 20,500,000원은 표시 합계와 일치함. 계좌별 명세서 금액은 보조원장과 일치하고, 보조원장 합계는 총계정원장 잔액과 일치함.",
+        "fs_link_status": "별도 조서 참조",
+        "fs_link_ref": "A-100 총괄표 (가상)",
+        "fs_link_basis": "재무상태표 현금및현금성자산 20,500,000원 ↔ 총계정원장 잔액, A-100 총괄표 B5행 (가상)",
+        "fs_link_statement": "재무상태표의 현금및현금성자산 20,500,000원을 총계정원장 잔액과 대사하여 일치를 확인하였다. 관련 수행 기록은 A-100 총괄표에 기재하였다. (가상)",
+        "conclusion": "제공된 자료 범위에서 명세서는 산술적으로 정확하고 보조원장 및 총계정원장과 일치한다. (가상 사례)",
+        "procedure_status": "수행 완료", "performer": "작성자", "performed_date": "2026-01-22",
+        "review_status": "검토 완료", "reviewer": "검토자(가상)", "review_date": "2026-01-25",
+        "review_scope": "조서 전체: 대사표, 자료 확인 기록, 결론",
+    })
+    d["materials"] = [
+        _mat("m_sched", "schedule", "명세_v1", "v1", scope="계좌 목록, 행별 금액, 표시 합계"),
+        _mat("m_sub", "subledger", "보조원장", "2025-12-31 마감", scope="K01·K02 기말잔액"),
+        _mat("m_gl", "gl", "총계정원장", "2025-12-31 마감", scope="현금및현금성자산 기말잔액"),
+    ]
+    st = d["recon"]["sets"][0]
+    st.update({"schedule_material_id": "m_sched", "stated_total": "20500000", "stated_total_loc": "명세_v1 명세!E6",
+               "rows": [_row("r1", "K01", "가나은행(가상)", "보통예금", "12500000", "12500000", "명세_v1 명세!E4", "보조원장 잔액!D4"),
+                        _row("r2", "K02", "다라은행(가상)", "정기예금", "8000000", "8000000", "명세_v1 명세!E5", "보조원장 잔액!D5")]})
+    d["recon"].update({"gl_balance": "20500000", "gl_loc": "총계정원장 원장!D4", "gl_material_id": "m_gl"})
+    d["scan"] = {"status": "수행", "note": "명세서 2개 항목을 확인함. 잔액 0 계좌나 기준일과 다른 기준일의 항목 없음.", "na_reason": ""}
+    return d
+
+
+def difference(resolved):
+    d = _base(resolved)
+    d["fields"].update(COMMON_FIELDS)
+    d["fields"].update({
+        "wp_no": "A-200",
+        "list_check": "수행 - 누락·추가 없음",
+        "list_check_note": "보조원장 계좌 2건과 명세서 항목 2건을 양방향 대조함. 한쪽에만 있는 계좌 없음.",
+        "work_performed": "명세서 행별 금액을 재계산하고 계좌별로 보조원장과 대사함. 보조원장 합계를 총계정원장 잔액과 비교함.",
+        "recon_result": "명세서 재계산 합계 20,400,000원으로 표시 합계와 100,000원 차이. K01에서 명세서 12,400,000원, 보조원장 12,500,000원으로 100,000원 차이. 보조원장 합계 20,500,000원은 총계정원장과 일치.",
+        "fs_link_status": "확인 중",
+        "conclusion": "두 차이의 원인을 확인 중이며 미해결 상태다. 재무제표 연결 검토는 아직 수행하지 않았다. (가상 사례)",
+        "procedure_status": "진행 중", "performer": "작성자", "performed_date": "",
+        "review_status": "미검토",
+    })
+    d["materials"] = [
+        _mat("m_sched", "schedule", "명세_v1", "v1", scope="계좌 목록, 행별 금액, 표시 합계"),
+        _mat("m_sub", "subledger", "보조원장", "2025-12-31 마감", scope="K01·K02 기말잔액"),
+        _mat("m_gl", "gl", "총계정원장", "2025-12-31 마감", scope="현금및현금성자산 기말잔액"),
+    ]
+    st = d["recon"]["sets"][0]
+    st.update({"schedule_material_id": "m_sched", "stated_total": "20500000", "stated_total_loc": "명세_v1 명세!E6",
+               "rows": [_row("r1", "K01", "가나은행(가상)", "보통예금", "12400000", "12500000", "명세_v1 명세!E4", "보조원장 잔액!D4"),
+                        _row("r2", "K02", "다라은행(가상)", "정기예금", "8000000", "8000000", "명세_v1 명세!E5", "보조원장 잔액!D5")]})
+    d["recon"].update({"gl_balance": "20500000", "gl_loc": "총계정원장 원장!D4", "gl_material_id": "m_gl"})
+    d["findings"] = [
+        {"id": "f1", "link": "set:s_orig:stated_vs_recalc", "title": "명세서 표시 합계와 재계산 합계 차이", "amount": 100000,
+         "fact": "명세서 행별 금액 합계 20,400,000원, 표시 합계 20,500,000원.", "cause": "",
+         "explanation_type": "담당자 설명만", "person": "자금팀 담당자(가상)", "discussed_at": "2026-01-22 14:00",
+         "explanation": "K01 금액을 옮겨 적을 때 틀렸을 수 있다는 설명. 수정 명세서를 주기로 함.", "recheck_material_id": "",
+         "followup": "수정 명세서 요청 (2026-01-22)", "status": "후속 확인 중", "resolution": "", "resolution_basis": ""},
+        {"id": "f2", "link": "set:s_orig:row:r1", "title": "K01 명세서와 보조원장 차이", "amount": -100000,
+         "fact": "K01 명세서 12,400,000원, 보조원장 12,500,000원.", "cause": "",
+         "explanation_type": "없음", "person": "", "discussed_at": "", "explanation": "", "recheck_material_id": "",
+         "followup": "보조원장 K01 기말 거래 내역 요청", "status": "미해결", "resolution": "", "resolution_basis": ""},
+    ]
+    d["scan"] = {"status": "미결정", "note": "", "na_reason": ""}
+    return d
+
+
+def missing(resolved):
+    d = _base(resolved)
+    d["fields"].update(COMMON_FIELDS)
+    d["fields"].update({
+        "wp_no": "A-200",
+        "list_check": "미수행",
+        "work_performed": "원본 명세서로 대사한 뒤 회사가 수정 명세서를 줌. 수정본 기준으로 다시 대사함. K02 보조원장은 아직 받지 못함.",
+        "recon_result": "수정 명세서 재계산 합계 20,500,000원은 표시 합계와 일치. K01은 보조원장과 일치. K02 보조원장 미입수로 대사 미완료.",
+        "fs_link_status": "미수행",
+        "conclusion": "K02 보조원장 미입수로 결론을 내리지 않았다. (가상 사례)",
+        "procedure_status": "진행 중", "performer": "작성자", "performed_date": "",
+        "review_status": "미검토",
+    })
+    d["materials"] = [
+        _mat("m_sched", "schedule", "명세_v1", "v1", scope="계좌 목록, 행별 금액, 표시 합계"),
+        _mat("m_sched2", "schedule", "명세_v2", "v2(수정)", kind="수정본", original_id="m_sched", received="2026-01-24",
+             scope="K01 금액 수정 내역, 표시 합계"),
+        _mat("m_sub", "subledger", "보조원장_K01", "2025-12-31 마감", scope="K01 기말잔액"),
+        _mat("m_sub2", "subledger", "보조원장_K02", "2025-12-31 마감", receipt="요청", confirmed=False,
+             remaining="K02 계좌 보조원장 요청(2026-01-22). 받으면 K02 보조부 금액 입력 후 재대사"),
+        _mat("m_gl", "gl", "총계정원장", "2025-12-31 마감", scope="현금및현금성자산 기말잔액"),
+    ]
+    orig = d["recon"]["sets"][0]
+    orig.update({"schedule_material_id": "m_sched", "stated_total": "20500000", "stated_total_loc": "명세_v1 명세!E6",
+                 "rows": [_row("r1", "K01", "가나은행(가상)", "보통예금", "12400000", "12500000", "명세_v1 명세!E4", "보조원장_K01 잔액!D4"),
+                          _row("r2", "K02", "다라은행(가상)", "정기예금", "8000000", "", "명세_v1 명세!E5", "", "보조원장 미입수")]})
+    rev = copy.deepcopy(orig)
+    rev.update({"id": "s_rev", "label": "수정본 명세서", "schedule_material_id": "m_sched2", "stated_total_loc": "명세_v2 명세!E6"})
+    rev["rows"][0].update({"id": "r1b", "schedule_amount": "12500000", "schedule_loc": "명세_v2 명세!E4"})
+    rev["rows"][1].update({"id": "r2b", "schedule_loc": "명세_v2 명세!E5"})
+    d["recon"]["sets"].append(rev)
+    d["recon"].update({"gl_balance": "20500000", "gl_loc": "총계정원장 원장!D4", "gl_material_id": "m_gl"})
+    d["findings"] = [
+        {"id": "f1", "link": "set:s_orig:stated_vs_recalc", "title": "원본 명세서 표시 합계와 재계산 합계 차이", "amount": 100000,
+         "fact": "원본 명세서 행별 합계 20,400,000원, 표시 합계 20,500,000원.", "cause": "K01 금액 기재 오류",
+         "explanation_type": "자료로 재확인", "person": "", "discussed_at": "", "explanation": "",
+         "recheck_material_id": "m_sched2", "followup": "수정 명세서 입수 후 재계산",
+         "status": "처리 완료", "resolution": "수정 명세서(명세_v2)로 재계산한 합계가 표시 합계와 일치함을 확인.",
+         "resolution_basis": "명세_v2 명세!E4:E6, 수정본 대사 결과"},
+        {"id": "f2", "link": "set:s_orig:row:r1", "title": "원본 명세서 K01과 보조원장 차이", "amount": -100000,
+         "fact": "원본 명세서 K01 12,400,000원, 보조원장 12,500,000원.", "cause": "K01 금액 기재 오류",
+         "explanation_type": "자료로 재확인", "person": "", "discussed_at": "", "explanation": "",
+         "recheck_material_id": "m_sched2", "followup": "",
+         "status": "처리 완료", "resolution": "수정 명세서의 K01 12,500,000원이 보조원장과 일치함을 확인.",
+         "resolution_basis": "명세_v2 명세!E4, 보조원장_K01 잔액!D4"},
+    ]
+    return d
+
+
+CASES = [
+    ("가상 정상(주)", normal),
+    ("가상 차이(주)", difference),
+    ("가상 자료부족(주)", missing),
+]
+
+
+def seed() -> list[int]:
+    resolved = content_mod.resolve(BINDING)
+    ids = []
+    for name, builder in CASES:
+        cid = records.create_company(name, is_sample=True)
+        eid = records.create_engagement(cid, PERIOD)
+        wid = records.create_workpaper(eid, BINDING)
+        records.save_workpaper(wid, builder(resolved), base_rev=1, note="가상 사례 입력")
+        ids.append(wid)
+    return ids

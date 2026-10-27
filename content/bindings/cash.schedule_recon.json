@@ -1,0 +1,38 @@
+{
+  "id": "cash.schedule_recon",
+  "version": "0.1.0",
+  "template": "schedule_recon",
+  "account": "현금및현금성자산·장단기금융상품",
+  "title": "현금및현금성자산·장단기금융상품 명세서 계산검증 및 보조부 대사",
+  "form_ref": "FORM4000:A!A17",
+  "assertions": {
+    "default": ["C", "V"],
+    "type": "원문 인용",
+    "refs": ["FORM4000:A!J17"],
+    "note": "서식 표기를 그대로 사용한다. 명세서·보조부 대사는 회사 기록 간 대조이므로 실재성 절차가 아니다.",
+    "review": {"status": "사용자 검토 완료", "by": "치치", "date": "2026-10-26", "scope": "시범 절차 주장 C·V 적용"}
+  },
+  "documents": {
+    "schedule": "현금및현금성자산·장단기금융상품 명세서",
+    "subledger": "예금별 보조원장",
+    "gl": "총계정원장"
+  },
+  "row": {
+    "id_label": "계좌 식별값",
+    "id_help": "계좌번호 끝 4자리 등 다시 찾을 수 있는 값. 전체 계좌번호는 적지 않는다.",
+    "name_label": "금융기관",
+    "extra_columns": [
+      {"key": "product_type", "label": "상품 종류", "type": "choice",
+       "options": ["보통예금", "당좌예금", "정기예금", "정기적금", "외화예금", "기타 금융상품"]}
+    ]
+  },
+  "guidance": [
+    {"step": "purpose", "kind": "record", "type": "근거 요약", "refs": ["FORM4000:A!A20", "FORM4000:A!J20", "FORM4000:A!A21", "FORM4000:A!J21"],
+     "text": "서식에서 실재성은 현금 등의 실사(E, C, RO)와 금융기관 조회(E, RO) 절차에 배정되어 있다. 이 조서에서는 실재성을 결론내지 않고, 관련 조서번호를 참조로 남긴다."},
+    {"step": "materials", "kind": "where", "type": "보완 설명", "refs": [],
+     "text": "명세서에 장단기금융상품이 함께 있는지, 현금성자산과 금융상품이 계정별로 나뉘는지 확인한다. 나뉜다면 총계정원장 잔액도 같은 범위로 맞춘다."},
+    {"step": "recon", "kind": "where", "type": "보완 설명", "refs": [],
+     "text": "보조원장은 계좌별 잔액이 나오는 화면이나 출력물을 쓴다. 계좌번호는 끝 4자리 등 식별값만 기록한다."}
+  ],
+  "sample_purpose": "현금및현금성자산·장단기금융상품 명세서가 산술적으로 정확하고 예금별 보조원장 및 총계정원장과 일치하는지 확인한다."
+}

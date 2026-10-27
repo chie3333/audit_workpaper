@@ -1,0 +1,15 @@
+{
+  "_comment": "경영진 주장 목록. 코드와 명칭은 서식 A시트 A7:H10 표기를 따른다.",
+  "source": {"ref": "FORM4000:A!A7:H10", "type": "원문 인용"},
+  "assertions": [
+    {"code": "A", "name": "정확성", "english": "Accuracy"},
+    {"code": "C", "name": "완전성", "english": "Completeness"},
+    {"code": "CO", "name": "기간귀속", "english": "Cutoff"},
+    {"code": "E", "name": "실재성", "english": "Existence"},
+    {"code": "O", "name": "발생사실", "english": "Occurrence"},
+    {"code": "V", "name": "평가", "english": "Valuation"},
+    {"code": "RO", "name": "권리와 의무", "english": "Rights and obligations"},
+    {"code": "CL", "name": "분류", "english": "Classification"},
+    {"code": "P", "name": "표시", "english": "Presentation"}
+  ]
+}
