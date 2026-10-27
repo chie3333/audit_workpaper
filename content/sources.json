@@ -1,5 +1,5 @@
 {
-  "_comment": "출처 목록. verified_locations에 있는 위치만 '원문 인용'·'근거 요약' 항목의 근거로 쓸 수 있다. 목록은 claude/근거매핑_현금명세서대사.md와 같아야 한다.",
+  "_comment": "출처 목록. verified_locations에 있는 위치만 '원문 인용'·'근거 요약' 항목의 근거로 쓸 수 있다. 목록은 docs/근거매핑_현금명세서대사.md와 같아야 한다.",
   "sources": [
     {
       "id": "KSA2026",
