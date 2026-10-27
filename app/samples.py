@@ -12,6 +12,7 @@ from . import records
 
 PERIOD = "2025-12-31"
 BINDING = "cash.schedule_recon"
+CLS_BINDING = "cash.classification_review"
 
 
 def _mat(mid, role, name, version, kind="원본", original_id="", receipt="입수", received="2026-01-20",
@@ -164,20 +165,78 @@ def missing(resolved):
     return d
 
 
+def _crow(rid, item, bank, product, amount, aloc, maturity_type, acquired, maturity, tloc,
+          restricted, rloc, company, auditor, basis):
+    return {"id": rid, "item_id": item, "name": bank, "product_type": product, "amount": amount, "amount_loc": aloc,
+            "maturity_type": maturity_type, "acquired_date": acquired, "maturity_date": maturity, "terms_loc": tloc,
+            "restricted": restricted, "restriction_note": "", "restriction_loc": rloc,
+            "company_class": company, "auditor_class": auditor, "basis": basis, "note": ""}
+
+
+def classification(resolved):
+    """K02 정기예금: 회사는 현금성자산으로 분류, 증서상 취득→만기 181일. 감사인 판단은 가상 예시다."""
+    d = records.default_data(resolved, PERIOD)
+    d["fields"].update({
+        "wp_no": "A-210",
+        "purpose": resolved.get("sample_purpose", "") or "명세서 항목별 분류가 증서·약정서의 만기와 사용제한 약정에 비추어 적절한지 확인한다. (가상 사례)",
+        "scope": "2025-12-31 현재 명세서 전체 항목(K01·K02). 금액 대사는 A-200, 사용제한 조회는 A-400에서 다루고 여기서는 참조만 한다. (가상)",
+        "risk_ref": "2302 위험평가 조서 현금 항목 (가상 참조)",
+        "related_wps": "A-200 명세서 대사, A-400 금융기관 조회 (가상 참조)",
+        "work_performed": "명세서의 항목별 회사 분류를 옮겨 적고, K02 예금증서에서 가입일과 만기일을 확인함. 사용제한 여부는 A-400 금융기관 조회 회신의 담보·제한 기재란으로 확인함.",
+        "classify_result": "K01 보통예금은 회사 분류와 판단이 같음. K02 정기예금 8,000,000원은 회사가 현금및현금성자산으로 분류했으나 증서상 취득일부터 만기일까지 181일이어서 단기금융상품으로 판단함. 재분류 금액 8,000,000원.",
+        "conclusion": "K02 분류 차이는 회사 설명의 근거(중도해지 조건) 자료를 받지 못해 미해결 상태다. (가상 사례)",
+        "procedure_status": "진행 중", "performer": "작성자", "performed_date": "",
+        "review_status": "미검토",
+    })
+    d["materials"] = [
+        _mat("m_sched", "schedule", "명세_v1", "v1", scope="항목 목록, 금액, 회사 분류"),
+        _mat("m_terms", "terms", "예금증서_K02", "증서 사본", scope="K02 가입일·만기일·금액·중도해지 조건"),
+        dict(_mat("m_restr", "restriction", "금융기관 조회 회신(A-400)", "회신 요약", scope="K01·K02 담보·사용제한 기재란"),
+             location="A-400 금융기관 조회 조서 회신 요약 (가상)"),
+    ]
+    d["classify"] = {"schedule_material_id": "m_sched", "rows": [
+        _crow("c1", "K01", "가나은행(가상)", "보통예금", "12400000", "명세_v1 명세!E4", "만기 없음", "", "", "",
+              "없음", "A-400 회신 K01 담보란", "현금및현금성자산", "현금및현금성자산", "요구불예금, 사용제한 없음"),
+        _crow("c2", "K02", "다라은행(가상)", "정기예금", "8000000", "명세_v1 명세!E5", "만기 있음", "2025-11-15", "2026-05-15",
+              "예금증서_K02 증서!C5:C6", "없음", "A-400 회신 K02 담보란", "현금및현금성자산", "단기금융상품",
+              "증서상 취득일부터 만기일까지 181일"),
+    ]}
+    d["findings"] = [
+        {"id": "f1", "link": "cls:row:c2", "title": "K02 분류 차이: 회사 현금및현금성자산 → 감사인 판단 단기금융상품", "amount": 8000000,
+         "fact": "K02 정기예금 8,000,000원. 예금증서상 가입일 2025-11-15, 만기일 2026-05-15(181일). 회사는 현금및현금성자산으로 분류.",
+         "cause": "", "explanation_type": "담당자 설명만", "person": "자금팀 담당자(가상)", "discussed_at": "2026-01-23 10:00",
+         "explanation": "언제든 중도해지할 수 있어 현금성자산으로 봤다는 설명. 중도해지 조건이 적힌 약관을 주기로 함.",
+         "recheck_material_id": "", "followup": "K02 상품 약관(중도해지 조건) 요청 (2026-01-23). 받으면 조건 확인 후 판단 재검토",
+         "status": "후속 확인 중", "resolution": "", "resolution_basis": ""},
+    ]
+    return d
+
+
 CASES = [
     ("가상 정상(주)", normal),
     ("가상 차이(주)", difference),
     ("가상 자료부족(주)", missing),
 ]
+# 분류 검토 사례는 대사 사례와 같은 회사·감사건에 조서를 하나 더 만든다
+CLASSIFICATION_CASES = [
+    ("가상 차이(주)", classification),
+]
 
 
 def seed() -> list[int]:
+    """대사 사례 3종 조서 id 뒤에 분류 검토 사례 조서 id를 붙여 돌려준다."""
     resolved = content_mod.resolve(BINDING)
-    ids = []
+    ids, engagements = [], {}
     for name, builder in CASES:
         cid = records.create_company(name, is_sample=True)
         eid = records.create_engagement(cid, PERIOD)
+        engagements[name] = eid
         wid = records.create_workpaper(eid, BINDING)
         records.save_workpaper(wid, builder(resolved), base_rev=1, note="가상 사례 입력")
+        ids.append(wid)
+    cls_resolved = content_mod.resolve(CLS_BINDING)
+    for name, builder in CLASSIFICATION_CASES:
+        wid = records.create_workpaper(engagements[name], CLS_BINDING)
+        records.save_workpaper(wid, builder(cls_resolved), base_rev=1, note="가상 사례 입력")
         ids.append(wid)
     return ids

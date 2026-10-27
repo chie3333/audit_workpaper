@@ -137,18 +137,25 @@ def snapshot_content(con, resolved: dict) -> int:
 
 # ---------------------------------------------------------------- 조서
 def default_data(resolved: dict, period_end: str) -> dict:
-    set_id = new_id("s")
-    return {
-        "fields": {"as_of_date": period_end, "procedure_status": "미착수", "review_status": "미검토", "list_check": "미수행"},
+    """템플릿의 구성요소에 맞춰 빈 조서 기록을 만든다."""
+    comps = {c["type"] for s in resolved["steps"] for c in s["components"]}
+    data = {
+        "fields": {"as_of_date": period_end, "procedure_status": "미착수", "review_status": "미검토"},
         "assertions": {"applied": list(resolved["assertions"]["default"]), "change_reason": ""},
         "materials": [],
-        "recon": {"sets": [{"id": set_id, "label": "원본 명세서", "schedule_material_id": "", "stated_total": "",
-                            "stated_total_loc": "", "rows": []}],
-                  "gl_balance": "", "gl_loc": "", "gl_material_id": ""},
-        "scan": {"status": "미결정", "note": "", "na_reason": ""},
-        "findings": [],
-        "review_comments": [],
     }
+    if "recon" in comps:
+        data["fields"]["list_check"] = "미수행"
+        data["recon"] = {"sets": [{"id": new_id("s"), "label": "원본 명세서", "schedule_material_id": "", "stated_total": "",
+                                   "stated_total_loc": "", "rows": []}],
+                         "gl_balance": "", "gl_loc": "", "gl_material_id": ""}
+    if "scan" in comps:
+        data["scan"] = {"status": "미결정", "note": "", "na_reason": ""}
+    if "classify" in comps:
+        data["classify"] = {"schedule_material_id": "", "rows": []}
+    data["findings"] = []
+    data["review_comments"] = []
+    return data
 
 
 def create_workpaper(engagement_id: int, binding_id: str, by: str = DEFAULT_USER) -> int:

@@ -10,24 +10,28 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Any
 
 # 콘텐츠가 참조할 수 있는 식별자. 콘텐츠 검증(content.py)이 이 목록으로 확인한다.
-CALCS = {"row_diff", "recalc_total", "stated_vs_recalc", "subledger_total", "subledger_vs_gl"}
+CALCS = {"row_diff", "recalc_total", "stated_vs_recalc", "subledger_total", "subledger_vs_gl",
+         "term_days", "class_totals", "reclass_diff"}
 CHECKS = {
     "required_fields", "materials_status", "materials_confirmed", "recon_blanks",
     "diff_without_finding", "list_check_finding", "findings_open", "findings_resolution",
     "findings_explanation_only", "assertion_change_reason", "scan_undecided",
-    "review_state", "status_consistency",
+    "review_state", "status_consistency", "classify_blanks",
 }
-COMPONENTS = {"fields", "assertions", "materials", "recon", "scan", "findings", "open_items", "review_comments"}
+COMPONENTS = {"fields", "assertions", "materials", "recon", "scan", "classify", "findings", "open_items", "review_comments"}
 FIELD_TYPES = {"text", "textarea", "date", "choice", "amount"}
 
 MATERIAL_ROLES = ["schedule", "subledger", "gl", "other"]
-REQUIRED_ROLES = ["schedule", "subledger", "gl"]
+REQUIRED_ROLES = ["schedule", "subledger", "gl"]  # 템플릿이 required_documents를 정하지 않으면 이 목록
 RECEIPT = ["요청 전", "요청", "입수", "입수 불가"]
 FINDING_STATUS = ["미해결", "후속 확인 중", "처리 완료"]
 EXPLANATION = ["없음", "담당자 설명만", "자료로 재확인"]
+MATURITY = ["만기 있음", "만기 없음"]
+RESTRICTION = ["미확인", "없음", "있음"]
 
 _AMOUNT_RE = re.compile(r"^-?\d+$")
 
@@ -55,6 +59,22 @@ def parse_amount(raw: Any) -> tuple[int | None, str | None]:
 
 def _blank(v: Any) -> bool:
     return v is None or (isinstance(v, str) and v.strip() == "")
+
+
+def parse_date(raw: Any) -> tuple[date | None, str | None]:
+    """(날짜, 오류). 빈칸은 (None, None). YYYY-MM-DD만 받는다."""
+    if _blank(raw):
+        return None, None
+    if isinstance(raw, date):
+        return raw, None
+    try:
+        return datetime.strptime(str(raw).strip(), "%Y-%m-%d").date(), None
+    except ValueError:
+        return None, "날짜 형식은 YYYY-MM-DD"
+
+
+def required_roles(content: dict) -> list[str]:
+    return content.get("required_documents", REQUIRED_ROLES)
 
 
 # ---------------------------------------------------------------- 표시 조건
@@ -149,15 +169,81 @@ def diff_points(data: dict, calc_sets: dict) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------- 분류 검토 계산
+def compute_classify(cls: dict, as_of_raw: Any, classes: list[str]) -> dict:
+    """분류 검토표 계산. 기간(일수)과 분류별 합계·차이만 계산하고 분류는 판단하지 않는다.
+
+    - 취득→만기, 기준일→만기 일수. 만기 없음이면 계산하지 않는다(None).
+    - 재분류 금액: 회사 분류와 감사인 판단 분류가 다르면 그 행의 금액, 같으면 0. 하나라도 비면 None.
+    - 분류별 합계: 금액이나 분류가 빈 행이 하나라도 있으면 계산하지 않는다.
+    """
+    as_of, _ = parse_date(as_of_raw)
+    rows_out, errors = {}, []
+    amounts, comp_cls, aud_cls = [], [], []
+    for row in cls.get("rows", []):
+        amt, ae = parse_amount(row.get("amount"))
+        if ae:
+            errors.append((row["id"], "amount", ae))
+        acq, de1 = parse_date(row.get("acquired_date"))
+        mat, de2 = parse_date(row.get("maturity_date"))
+        for k, e in (("acquired_date", de1), ("maturity_date", de2)):
+            if e:
+                errors.append((row["id"], k, e))
+        no_maturity = row.get("maturity_type") == "만기 없음"
+        acq_days = (mat - acq).days if (not no_maturity and acq and mat) else None
+        remain_days = (mat - as_of).days if (not no_maturity and mat and as_of) else None
+        c, a = (row.get("company_class") or "").strip(), (row.get("auditor_class") or "").strip()
+        reclass = None if (amt is None or not c or not a) else (0 if c == a else amt)
+        rows_out[row["id"]] = {"amount": amt, "acq_days": acq_days, "remain_days": remain_days,
+                               "no_maturity": no_maturity, "company": c, "auditor": a, "reclass": reclass,
+                               "date_order_error": bool(acq and mat and mat < acq)}
+        amounts.append(amt)
+        comp_cls.append(c)
+        aud_cls.append(a)
+    n = len(amounts)
+    amounts_ok = n > 0 and all(v is not None for v in amounts)
+    comp_ok = amounts_ok and all(comp_cls)
+    aud_ok = amounts_ok and all(aud_cls)
+    totals = {}
+    for k in classes:
+        ct = sum(v for v, c in zip(amounts, comp_cls) if c == k) if comp_ok else None
+        at = sum(v for v, c in zip(amounts, aud_cls) if c == k) if aud_ok else None
+        totals[k] = {"company": ct, "auditor": at, "diff": (at - ct) if (ct is not None and at is not None) else None}
+    return {
+        "rows": rows_out,
+        "row_count": n,
+        "total_amount": sum(amounts) if amounts_ok else None,
+        "totals": totals,
+        "unknown_classes": sorted({c for c in comp_cls + aud_cls if c and c not in classes}),
+        "errors": errors,
+    }
+
+
+def classify_diffs(data: dict, calc: dict | None) -> list[dict]:
+    """회사 분류와 감사인 판단 분류가 다른 행. 발견 사항과 연결할 키를 갖는다."""
+    if not calc:
+        return []
+    out = []
+    for row in data["classify"].get("rows", []):
+        c = calc["rows"][row["id"]]
+        if c["reclass"] not in (None, 0):
+            out.append({"key": f"cls:row:{row['id']}", "row": row["id"],
+                        "title": f"{row.get('item_id') or '(식별값 없음)'} 분류 차이: 회사 {c['company']} → 감사인 판단 {c['auditor']}",
+                        "amount": c["reclass"]})
+    return out
+
+
 # ---------------------------------------------------------------- 전체 계산
 def compute(content: dict, data: dict) -> dict:
     fields = data.get("fields", {})
     visible = {f["key"]: eval_cond(f.get("show_if"), fields) for _, f in iter_fields(content)}
 
-    recon = data["recon"]
-    calc_sets = {st["id"]: compute_set(st, recon.get("gl_balance")) for st in recon["sets"]}
-    active_id = recon["sets"][-1]["id"] if recon["sets"] else None
-    diffs = diff_points(data, calc_sets)
+    recon = data.get("recon")
+    calc_sets = {st["id"]: compute_set(st, recon.get("gl_balance")) for st in recon["sets"]} if recon else {}
+    active_id = recon["sets"][-1]["id"] if recon and recon["sets"] else None
+    cls_calc = compute_classify(data["classify"], fields.get("as_of_date"), content.get("classify", {}).get("classes", [])) \
+        if "classify" in data else None
+    diffs = (diff_points(data, calc_sets) if recon else []) + classify_diffs(data, cls_calc)
     linked = {f.get("link") for f in data.get("findings", []) if f.get("link")}
     for d in diffs:
         d["has_finding"] = d["key"] in linked
@@ -191,6 +277,7 @@ def compute(content: dict, data: dict) -> dict:
         "visible": visible,
         "sets": calc_sets,
         "active_set": active_id,
+        "classify": cls_calc,
         "diffs": diffs,
         "ui": ui,
         "open_items": items,
@@ -209,17 +296,25 @@ def compute(content: dict, data: dict) -> dict:
 
 def _link_state(link, diffs, data) -> str:
     """발견 사항이 가리키는 차이의 현재 상태: 차이 있음 / 차이 없어짐 / 수동 등록."""
-    if not link or not str(link).startswith("set:"):
+    link = str(link or "")
+    if not link.startswith(("set:", "cls:")):
         return "manual"
     if any(d["key"] == link for d in diffs):
         return "open"
-    sid = str(link).split(":")[1]
-    if not any(st["id"] == sid for st in data["recon"]["sets"]):
-        return "missing"
+    if link.startswith("set:"):
+        sid = link.split(":")[1]
+        if not any(st["id"] == sid for st in data.get("recon", {}).get("sets", [])):
+            return "missing"
+    else:
+        rid = link.split(":")[2]
+        if not any(r["id"] == rid for r in data.get("classify", {}).get("rows", [])):
+            return "missing"
     return "zero_or_blank"
 
 
 def _unused_revised(data: dict) -> list[str]:
+    if "recon" not in data:
+        return []
     used = {st.get("schedule_material_id") for st in data["recon"]["sets"]}
     return [m["id"] for m in data.get("materials", [])
             if m.get("role") == "schedule" and m.get("kind") == "수정본" and m["id"] not in used]
@@ -257,7 +352,7 @@ def run_checks(content, data, visible, calc_sets, diffs) -> list[dict]:
                     items.append(_item("block", "미입력", step["id"], f"{f['label']}: {err}", f"field:{f['key']}"))
 
     if "materials_status" in enabled:
-        for role in REQUIRED_ROLES:
+        for role in required_roles(content):
             if not any(m.get("role") == role for m in mats):
                 items.append(_item("block", "자료", "materials", f"자료 미등록: {labels.get(role, role)}"))
         for m in mats:
@@ -314,6 +409,52 @@ def run_checks(content, data, visible, calc_sets, diffs) -> list[dict]:
                 items.append(_item("block", "미입력", "recon", f"[{label}] 금액 형식 오류({err})", f"row:{rid}"))
         if parse_amount(data["recon"].get("gl_balance"))[0] is None:
             items.append(_item("block", "미입력", "recon", "총계정원장 잔액 미입력"))
+
+    if "classify_blanks" in enabled:
+        cls = data["classify"]
+        c = compute_classify(cls, fields.get("as_of_date"), content.get("classify", {}).get("classes", []))
+        if c["row_count"] == 0:
+            items.append(_item("block", "미입력", "classify", "분류 검토 항목이 없음"))
+        if _blank(cls.get("schedule_material_id")):
+            items.append(_item("warn", "자료", "classify", "검토에 쓴 명세서 자료가 연결되지 않음"))
+        for row in cls.get("rows", []):
+            rc = c["rows"][row["id"]]
+            name = row.get("item_id") or "(식별값 없음)"
+            ref = f"crow:{row['id']}"
+            if _blank(row.get("item_id")):
+                items.append(_item("block", "미입력", "classify", "식별값이 없는 분류 검토 항목이 있음", ref))
+            if rc["amount"] is None:
+                items.append(_item("block", "미입력", "classify", f"{name}: 금액 미입력 — 분류별 합계를 계산하지 않음", ref))
+            mt = row.get("maturity_type")
+            if mt not in MATURITY:
+                items.append(_item("block", "미입력", "classify", f"{name}: 만기 구분 미입력", ref))
+            elif mt == "만기 있음":
+                miss = [lab for k, lab in (("acquired_date", "취득일"), ("maturity_date", "만기일")) if _blank(row.get(k))]
+                if miss:
+                    items.append(_item("block", "미입력", "classify", f"{name}: {', '.join(miss)} 미입력 — 기간을 계산하지 않음", ref))
+                if rc["date_order_error"]:
+                    items.append(_item("block", "미입력", "classify", f"{name}: 만기일이 취득일보다 빠름", ref))
+                if _blank(row.get("terms_loc")):
+                    items.append(_item("warn", "미입력", "classify", f"{name}: 취득일·만기일 근거 위치 없음", ref))
+            rs = row.get("restricted") or "미확인"
+            if rs == "미확인":
+                items.append(_item("block", "미입력", "classify", f"{name}: 사용제한 여부 미확인", ref))
+            elif rs == "있음" and _blank(row.get("restriction_note")):
+                items.append(_item("block", "미입력", "classify", f"{name}: 사용제한 내용 미기록", ref))
+            if rs in ("없음", "있음") and _blank(row.get("restriction_loc")):
+                items.append(_item("warn", "미입력", "classify", f"{name}: 사용제한 확인 근거 위치 없음", ref))
+            if not rc["company"]:
+                items.append(_item("block", "미입력", "classify", f"{name}: 회사 분류 미입력", ref))
+            if not rc["auditor"]:
+                items.append(_item("block", "미입력", "classify", f"{name}: 감사인 판단 분류 미입력", ref))
+            elif _blank(row.get("basis")):
+                items.append(_item("block", "미입력", "classify", f"{name}: 감사인 판단 분류의 근거 미기록", ref))
+            if _blank(row.get("amount_loc")):
+                items.append(_item("warn", "미입력", "classify", f"{name}: 금액 근거 위치 없음", ref))
+        for k in c["unknown_classes"]:
+            items.append(_item("block", "미입력", "classify", f"콘텐츠에 없는 분류 '{k}'"))
+        for rid, fld, err in c["errors"]:
+            items.append(_item("block", "미입력", "classify", f"형식 오류({err})", f"crow:{rid}"))
 
     if "diff_without_finding" in enabled:
         for d in diffs:

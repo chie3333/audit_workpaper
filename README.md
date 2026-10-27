@@ -7,16 +7,19 @@
 결정 이력은 [docs/결정기록.md](docs/결정기록.md), 작업 현황은 [docs/진행상황.md](docs/진행상황.md)에 있다.
 
 **현재 상태: 1단계 v1 (단일 사용자, 로컬 실행)**
-시범 절차는 *현금및현금성자산·장단기금융상품 명세서 계산검증 및 보조부 대사* 하나다. 분개장 업로드·계정 매핑(2단계)과 AI 매핑 보조(3단계)는 없다.
+절차는 현금및현금성자산·장단기금융상품 계정의 두 가지다: *명세서 계산검증 및 보조부 대사*, *분류 검토(만기·사용제한)*. 분개장 업로드·계정 매핑(2단계)과 AI 매핑 보조(3단계)는 없다.
 운영 중 AI를 호출하지 않는다.
 
 ## 실행
 
 ```bash
 pip install -r requirements.txt
-python scripts/seed_samples.py      # 가상 사례 3종(정상·차이·자료 부족) 넣기 — 선택
+python scripts/seed_samples.py      # 가상 사례 넣기(대사 3종 + 분류 검토 1종) — 선택
 uvicorn app.main:app --reload       # http://localhost:8000
 ```
+
+가상 사례가 근거 위치로 가리키는 회사 자료(명세서·보조원장·총계정원장·예금증서)는 `samples/sources/<사례>/`에 엑셀로 있다.
+조서의 근거 위치(예: `명세_v1 명세!E4`)를 열면 같은 금액이 보인다. 다시 만들려면 `python scripts/make_sample_sources.py`.
 
 테스트: `python -m pytest -q` (웹 계산과 엑셀 수식 결과를 대조하는 테스트는 LibreOffice가 있어야 실행된다)
 
@@ -31,6 +34,8 @@ uvicorn app.main:app --reload       # http://localhost:8000
 - 분기: 차이 → 발견 사항 기록 요구 / 자료 미입수 → 남은 작업 / 수정본 명세서 입수 → 이전 대사 보존 후 재대사 / 미해결 → 결론·엑셀에 표시
 - 상태 3종 분리: 절차 수행(대체절차 수행 포함) · 발견 사항 처리 · 검토
 - 자료 '등록'과 '증거 확인' 구분, 발견 사항의 '담당자 설명만'과 '자료로 재확인' 구분
+- 분류 검토: 항목별 취득일·만기일·사용제한·회사 분류·감사인 판단 분류를 기록. 프로그램은 취득→만기, 대상일→만기 일수와
+  분류별 합계(회사 vs 감사인 판단)만 계산하고 분류를 제안하지 않음. 분류가 다른 행은 재분류 금액으로 잡혀 발견 사항 기록을 요구
 - 재무제표 연결(감사기준서 330 문단 30)은 상태를 고르게 하고, 수행하지 않았으면 명시 문장을 만들지 않음
 - 업무용 편집 잠금(잠긴 조서 수정 시 이유 기록). 최종 감사파일 취합·법정 보존 기능은 아님
 - 엑셀: 한 조서 한 시트, 검토표 30행 초과 시 상세 시트. 차이·합계는 수식. 가상 데이터·미검토·미해결·원본/수정본 표시
@@ -39,7 +44,8 @@ uvicorn app.main:app --reload       # http://localhost:8000
 
 - 증빙 파일 업로드·하이퍼링크·OCR (v1은 자료 식별정보와 위치만 기록)
 - 로그인·다중 사용자·권한 (작성자 이름 칸은 있음)
-- 분개장 업로드, 계정 매핑, 다른 계정·다른 절차 콘텐츠
+- 분개장 업로드, 계정 매핑, 현금 외 다른 계정 콘텐츠
+- 분류 검토의 서식 위치와 분류 기준(기업회계기준서) 문단 확인 — 안내는 '미확인'으로 표시됨
 - 콘텐츠 편집 화면 (JSON 파일을 직접 고침)
 
 ## 구조
@@ -50,15 +56,18 @@ app/
   engine.py    계산·표시 조건·남은 작업 점검 — 계산은 여기 한 곳에서만
   records.py   SQLite 저장 (회사 → 감사건 → 조서 → 리비전, 콘텐츠 스냅샷, 잠금 기록)
   export.py    엑셀 조서 생성
-  samples.py   가상 사례 3종
+  samples.py   가상 사례 (대사 3종 + 분류 검토 1종)
   main.py      FastAPI
   static/      화면 (바닐라 JS)
 content/
   sources.json                 출처 목록과 확인된 위치(근거매핑과 같아야 함)
   assertions.json              경영진 주장 (서식 A!A7:H10)
-  templates/schedule_recon.json  공통 절차 템플릿
-  bindings/cash.schedule_recon.json  현금 계정 설정
-tests/        테스트 32개
+  templates/schedule_recon.json         공통 절차 템플릿: 명세서 대사
+  templates/classification_review.json  공통 절차 템플릿: 분류 검토
+  bindings/cash.schedule_recon.json         현금 계정 설정: 명세서 대사
+  bindings/cash.classification_review.json  현금 계정 설정: 분류 검토
+samples/sources/  가상 회사 자료 엑셀 (정상·차이·자료부족, scripts/make_sample_sources.py로 생성)
+tests/        테스트 52개
 ```
 
 ### 다른 계정 추가

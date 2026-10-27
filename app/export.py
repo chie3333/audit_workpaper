@@ -39,7 +39,10 @@ NUM = "#,##0;-#,##0;0"
 WIDTHS = {"A": 5, "B": 14, "C": 18, "D": 13, "E": 16, "F": 16, "G": 17, "H": 22, "I": 22, "J": 26}
 CHARS_PER_LINE = 70  # C:J 병합 영역에 한글 기준 대략적인 한 줄 글자 수
 
-DOC_LABEL = {"schedule": "명세서", "subledger": "보조부", "gl": "총계정원장", "other": "기타"}
+DOC_LABEL = {"schedule": "명세서", "subledger": "보조부", "gl": "총계정원장",
+             "terms": "증서·약정서", "restriction": "사용제한 자료", "other": "기타"}
+DATE = "yyyy-mm-dd"
+CLASSIFY = "classification_review"
 
 
 def _amount_cell(raw):
@@ -195,6 +198,106 @@ def _summary(sh: Sheet, rng: dict, st: dict, gl_raw, gl_loc: str, ref_sheet: str
     return cells
 
 
+def _date_cell(raw):
+    d, err = engine.parse_date(raw)
+    if err:
+        return str(raw)
+    return d
+
+
+def _classify_tables(sh: Sheet, data: dict, content: dict, fields: dict) -> dict:
+    """분류 검토표 두 개(기간·분류)와 분류별 합계. 일수·재분류 금액·합계는 수식으로 쓴다."""
+    ws = sh.ws
+    rlab = content["row"]
+    extra = rlab.get("extra_columns", [])
+    classes = content["classify"]["classes"]
+    rows = data["classify"].get("rows", [])
+    cellmap = {"rows": {}, "totals": {}}
+
+    r = sh.r
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+    k = ws.cell(r, 1, "대상일(기준일) — 대상일→만기 일수의 기준")
+    k.font, k.fill = FB, KEY
+    asof = ws.cell(r, 5, _date_cell(fields.get("as_of_date")))
+    asof.number_format, asof.font = DATE, FB
+    for c in range(1, 11):
+        ws.cell(r, c).border = BOX
+    asof_ref = f"$E${r}"
+    sh.r += 1
+
+    sh.note("(1) 만기와 기간 — 일수는 날짜로만 계산했다. 몇 개월 이내인지, 어느 분류가 맞는지는 프로그램이 판단하지 않는다.", font=FB)
+    sh.header(["#", rlab["id_label"], rlab["name_label"], extra[0]["label"] if extra else "구분",
+               "금액", "취득일", "만기일", "취득→만기\n(일)", "대상일→만기\n(일)", "날짜 근거 위치"])
+    for i, row in enumerate(rows, 1):
+        r = sh.r
+        no_mat = row.get("maturity_type") == "만기 없음"
+        mat = "만기 없음" if no_mat else _date_cell(row.get("maturity_date"))
+        acq = "" if no_mat else _date_cell(row.get("acquired_date"))
+        sh.row([i, row.get("item_id") or "", row.get("name") or "", row.get(extra[0]["key"], "") if extra else "",
+                _amount_cell(row.get("amount")), acq, mat,
+                f'=IF(G{r}="만기 없음","해당 없음",IF(OR(F{r}="",G{r}=""),"미입력",IF(OR(ISTEXT(F{r}),ISTEXT(G{r})),"형식 오류",G{r}-F{r})))',
+                f'=IF(G{r}="만기 없음","해당 없음",IF(OR(G{r}="",{asof_ref}=""),"미입력",IF(OR(ISTEXT(G{r}),ISTEXT({asof_ref})),"형식 오류",G{r}-{asof_ref})))',
+                row.get("terms_loc") or ""], height_cols={10})
+        ws.cell(r, 5).number_format = NUM
+        for col in (6, 7):
+            ws.cell(r, col).number_format = DATE
+        for col in (5, 8, 9):
+            ws.cell(r, col).alignment = Alignment(horizontal="right", vertical="top")
+            if col != 5:
+                ws.cell(r, col).number_format = NUM
+        if ws.cell(r, 5).value is None:
+            ws.cell(r, 5).fill = BLANKFILL
+        cellmap["rows"][row["id"]] = {"acq_days": f"H{r}", "remain_days": f"I{r}"}
+    sh.r += 1
+
+    sh.note("(2) 사용제한과 분류 — 감사인 판단 분류와 근거는 수행자가 직접 적은 내용이다.", font=FB)
+    sh.header(["#", rlab["id_label"], "사용제한", "제한 내용·근거 위치", "금액", "회사 분류", "감사인 판단 분류",
+               "재분류 금액", "판단 근거", "금액 근거 위치"])
+    first = sh.r
+    for i, row in enumerate(rows, 1):
+        r = sh.r
+        rs = row.get("restricted") or "미확인"
+        rnote = "\n".join(x for x in (row.get("restriction_note"), row.get("restriction_loc")) if x)
+        sh.row([i, row.get("item_id") or "", rs, rnote, _amount_cell(row.get("amount")),
+                row.get("company_class") or None, row.get("auditor_class") or None,
+                f'=IF(OR(E{r}="",F{r}="",G{r}=""),"미입력",IF(ISTEXT(E{r}),"형식 오류",IF(F{r}=G{r},0,E{r})))',
+                row.get("basis") or "", row.get("amount_loc") or ""], height_cols={4, 9, 10})
+        for col in (5, 8):
+            ws.cell(r, col).number_format = NUM
+            ws.cell(r, col).alignment = Alignment(horizontal="right", vertical="top")
+        if rs == "미확인":
+            ws.cell(r, 3).fill = WARN
+        for col in (5, 6, 7):
+            if ws.cell(r, col).value is None:
+                ws.cell(r, col).fill = BLANKFILL
+        cellmap["rows"][row["id"]]["reclass"] = f"H{r}"
+    last = sh.r - 1
+    sh.r += 1
+
+    sh.note("(3) 분류별 합계 — 금액이나 분류가 빈 행이 있으면 합계를 '미입력'으로 표시한다.", font=FB)
+    hr = sh.r
+    sh.header(["", "분류", "", "", "회사 분류 합계", "감사인 판단 합계", "차이\n(판단−회사)", "", "", ""])
+    ws.merge_cells(start_row=hr, start_column=2, end_row=hr, end_column=4)
+    n = last - first + 1
+    for k in classes:
+        r = sh.r
+        if n > 0:
+            amt, cc, ac = f"E{first}:E{last}", f"F{first}:F{last}", f"G{first}:G{last}"
+            bad = f"COUNTBLANK({amt})+SUMPRODUCT(--ISTEXT({amt}))"
+            comp = f'=IF({bad}+COUNTBLANK({cc})>0,"미입력",SUMIF({cc},"{k}",{amt}))'
+            aud = f'=IF({bad}+COUNTBLANK({ac})>0,"미입력",SUMIF({ac},"{k}",{amt}))'
+        else:
+            comp = aud = "미입력"
+        sh.row(["", k, "", "", comp, aud, f'=IF(OR(ISTEXT(E{r}),ISTEXT(F{r})),"미입력",F{r}-E{r})', "", "", ""])
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
+        for col in (5, 6, 7):
+            ws.cell(r, col).number_format = NUM
+            ws.cell(r, col).alignment = Alignment(horizontal="right", vertical="top")
+        ws.cell(r, 7).font = FB
+        cellmap["totals"][k] = {"company": f"E{r}", "auditor": f"F{r}", "diff": f"G{r}"}
+    return cellmap
+
+
 def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     """엑셀 바이트와, 테스트용 셀 위치 지도를 돌려준다."""
     content, data = wp["content"], wp["data"]
@@ -212,6 +315,7 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     ws.sheet_view.showGridLines = False
     sh = Sheet(ws)
     cellmap = {"sets": {}}
+    is_cls = content["template"]["id"] == CLASSIFY
 
     ws.merge_cells("A1:J1")
     ws["A1"] = content["title"]
@@ -243,7 +347,8 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     sh.kv("통화·단위", f"{wp['currency']} · {wp['unit']}")
     sh.kv("계정", content["account"])
     sh.kv("절차", content["title"])
-    sh.kv("서식 위치", "감사조서서식_4000 A시트 A17–A19 (명세서 계산검증·보조부 대조, 스캔)")
+    sh.kv("서식 위치", "미확인 — 감사조서서식_4000에서 이 절차의 위치를 확인하지 못함" if is_cls else
+          "감사조서서식_4000 A시트 A17–A19 (명세서 계산검증·보조부 대조, 스캔)")
     sh.kv("콘텐츠 버전", f"{content['content_key']} (해시 {content['hash'][:12]})")
     sh.kv("조서 저장본", f"리비전 {wp['rev']} · {wp['saved_at']} · {wp['saved_by']}" + ("  ※ 최신 저장본 아님" if wp["rev"] != wp["latest_rev"] else ""))
     sh.kv("편집 잠금", "잠김 (업무용 잠금이며 최종 감사파일 취합·법정 보존 기능이 아님)" if wp["locked"] else "잠기지 않음")
@@ -258,12 +363,13 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     a_text = ", ".join(f"{names.get(c, c)}({c})" for c in applied) or "(없음)"
     a_text += "  — 콘텐츠 기본값과 같음" if sorted(applied) == sorted(default) else \
         f"  — 콘텐츠 기본값({', '.join(default)})에서 변경. 변경 이유: {data['assertions'].get('change_reason') or '(미기록)'}"
-    a_text += "  [출처: 서식 A!J17]"
+    a_text += "  [출처 미확인 — 사용자가 정함]" if is_cls else "  [출처: 서식 A!J17]"
     sh.kv("적용 경영진 주장", a_text)
     sh.kv("관련 위험·계획 조서", fields.get("risk_ref"))
     sh.kv("중요성 참조", fields.get("materiality_ref"))
     sh.kv("관련 조서", fields.get("related_wps"))
-    sh.kv("근거", "서식 A!A17–A18 · 감사기준서 330 문단 20·30, 500 문단 9 (회계감사기준 2026년 7월 개정 전문)")
+    sh.kv("근거", "감사기준서 230 문단 9, 500 문단 7·9 (회계감사기준 2026년 7월 개정 전문). 분류 기준(기업회계기준서 제1007호·제1001호) 문단은 미확인" if is_cls else
+          "서식 A!A17–A18 · 감사기준서 330 문단 20·30, 500 문단 9 (회계감사기준 2026년 7월 개정 전문)")
 
     # 3. 사용 자료
     sh.section("3. 사용 자료")
@@ -299,42 +405,47 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
         sh.kv("목적 달성 방법", fields.get("alt_how"))
         sh.kv("이탈 이유", fields.get("deviation_reason"))
     sh.kv("실제 수행 내역", fields.get("work_performed"))
-    lc = fields.get("list_check") or "미수행"
-    sh.kv("목록 양방향 대조", lc + (f"\n{fields.get('list_check_note')}" if fields.get("list_check_note") else ""))
-    sc = data.get("scan", {})
-    sct = sc.get("status") or "미결정"
-    if sct == "수행":
-        sct += f"\n{sc.get('note') or ''}"
-    elif sct == "해당 없음":
-        sct += f" — 사유: {sc.get('na_reason') or '(미기록)'}"
-    sh.kv("명세서 스캔(선택 단계)", sct)
+    if is_cls:
+        sh.section("5. 분류 검토표")
+        sh.note("빈칸은 확인하지 않은 값이다(노란 칸). 금액이나 분류가 빈 행이 있으면 분류별 합계를 계산하지 않는다.")
+        cellmap["classify"] = _classify_tables(sh, data, content, fields)
+    else:
+        lc = fields.get("list_check") or "미수행"
+        sh.kv("목록 양방향 대조", lc + (f"\n{fields.get('list_check_note')}" if fields.get("list_check_note") else ""))
+        sc = data.get("scan", {})
+        sct = sc.get("status") or "미결정"
+        if sct == "수행":
+            sct += f"\n{sc.get('note') or ''}"
+        elif sct == "해당 없음":
+            sct += f" — 사유: {sc.get('na_reason') or '(미기록)'}"
+        sh.kv("명세서 스캔(선택 단계)", sct)
 
-    # 5. 검토표
-    sh.section("5. 검토표 · 계산검증과 대사")
-    sh.note("빈칸은 확인하지 않은 금액이며 0원으로 계산하지 않는다(노란 칸). 빈칸이 있으면 합계와 차이는 '미입력'으로 표시된다.")
-    sets = data["recon"]["sets"]
-    detail = None
-    for idx, st in enumerate(reversed(sets)):
-        is_active = idx == 0
-        mat = mats.get(st.get("schedule_material_id"), {})
-        title = f"{'현재 대사' if is_active else '이전 대사 기록(수정 전, 보존용)'}: {st.get('label') or ''} — 명세서 자료: {mat.get('name') or '(미연결)'} {mat.get('version_label') or ''}"
-        sh.note(title, font=FB)
-        n = len(st.get("rows", []))
-        if n > threshold:
-            if detail is None:
-                detail = Sheet(wb.create_sheet("검토표_상세"))
-                detail.ws.sheet_view.showGridLines = False
-            detail.note(f"{wp['company']} · {content['title']} — {title}", font=FB)
-            rng = _recon_table(detail, st, content)
-            detail.r += 1
-            sh.note(f"항목 {n}건은 '검토표_상세' 시트에 있다. 아래 합계는 상세 시트를 수식으로 참조한다.")
-            cells = _summary(sh, rng, st, data["recon"].get("gl_balance"), data["recon"].get("gl_loc"), "검토표_상세")
-            cellmap["sets"][st["id"]] = {"sheet_rows": "검토표_상세", "rows": rng, "summary": cells}
-        else:
-            rng = _recon_table(sh, st, content)
-            cells = _summary(sh, rng, st, data["recon"].get("gl_balance"), data["recon"].get("gl_loc"), None)
-            cellmap["sets"][st["id"]] = {"sheet_rows": "조서", "rows": rng, "summary": cells}
-        sh.r += 1
+        # 5. 검토표
+        sh.section("5. 검토표 · 계산검증과 대사")
+        sh.note("빈칸은 확인하지 않은 금액이며 0원으로 계산하지 않는다(노란 칸). 빈칸이 있으면 합계와 차이는 '미입력'으로 표시된다.")
+        sets = data["recon"]["sets"]
+        detail = None
+        for idx, st in enumerate(reversed(sets)):
+            is_active = idx == 0
+            mat = mats.get(st.get("schedule_material_id"), {})
+            title = f"{'현재 대사' if is_active else '이전 대사 기록(수정 전, 보존용)'}: {st.get('label') or ''} — 명세서 자료: {mat.get('name') or '(미연결)'} {mat.get('version_label') or ''}"
+            sh.note(title, font=FB)
+            n = len(st.get("rows", []))
+            if n > threshold:
+                if detail is None:
+                    detail = Sheet(wb.create_sheet("검토표_상세"))
+                    detail.ws.sheet_view.showGridLines = False
+                detail.note(f"{wp['company']} · {content['title']} — {title}", font=FB)
+                rng = _recon_table(detail, st, content)
+                detail.r += 1
+                sh.note(f"항목 {n}건은 '검토표_상세' 시트에 있다. 아래 합계는 상세 시트를 수식으로 참조한다.")
+                cells = _summary(sh, rng, st, data["recon"].get("gl_balance"), data["recon"].get("gl_loc"), "검토표_상세")
+                cellmap["sets"][st["id"]] = {"sheet_rows": "검토표_상세", "rows": rng, "summary": cells}
+            else:
+                rng = _recon_table(sh, st, content)
+                cells = _summary(sh, rng, st, data["recon"].get("gl_balance"), data["recon"].get("gl_loc"), None)
+                cellmap["sets"][st["id"]] = {"sheet_rows": "조서", "rows": rng, "summary": cells}
+            sh.r += 1
 
     # 6. 발견 사항
     sh.section("6. 발견 사항과 후속 대응")
@@ -365,15 +476,18 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
 
     # 7. 결론
     sh.section("7. 결론과 미해결 사항")
-    sh.kv("이번 조서의 대사 결과", fields.get("recon_result"))
-    fl = fields.get("fs_link_status") or "(미입력)"
-    sh.kv("재무제표 정보와 회계기록의 연결", fl + (f" — 참조: {fields.get('fs_link_ref')}" if fl == "별도 조서 참조" else ""),
-          fill=WARN if fl in ("확인 중", "미수행", "(미입력)") else None)
-    if fl in ("일치 확인", "조정 후 확인", "별도 조서 참조"):
-        sh.kv("연결 근거", fields.get("fs_link_basis"))
-        sh.kv("명시 문장", fields.get("fs_link_statement"))
+    if is_cls:
+        sh.kv("이번 조서의 분류 검토 결과", fields.get("classify_result"))
     else:
-        sh.kv("명시 문장", f"작성하지 않음 — 연결 검토 상태: {fl}")
+        sh.kv("이번 조서의 대사 결과", fields.get("recon_result"))
+        fl = fields.get("fs_link_status") or "(미입력)"
+        sh.kv("재무제표 정보와 회계기록의 연결", fl + (f" — 참조: {fields.get('fs_link_ref')}" if fl == "별도 조서 참조" else ""),
+              fill=WARN if fl in ("확인 중", "미수행", "(미입력)") else None)
+        if fl in ("일치 확인", "조정 후 확인", "별도 조서 참조"):
+            sh.kv("연결 근거", fields.get("fs_link_basis"))
+            sh.kv("명시 문장", fields.get("fs_link_statement"))
+        else:
+            sh.kv("명시 문장", f"작성하지 않음 — 연결 검토 상태: {fl}")
     sh.kv("결론", fields.get("conclusion"))
     if open_items:
         sh.note(f"출력 시점 남은 작업 {len(blocks)}건, 주의 {len(open_items) - len(blocks)}건", font=FR)

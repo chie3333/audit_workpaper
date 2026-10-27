@@ -1,0 +1,153 @@
+{
+  "id": "classification_review",
+  "version": "0.1.0",
+  "title": "만기·사용제한 자료에 따른 분류 검토",
+  "_comment": "공통 절차 템플릿. 계정별 설정(bindings)이 자료명·분류 선택지·계정 안내를 채운다. 프로그램은 기간(일수)과 분류별 합계만 계산하고 분류를 판단하지 않는다. 분류 기준 문단은 근거매핑에 없어 '보완 설명·미확인'으로 둔다.",
+  "required_documents": ["schedule", "terms", "restriction"],
+  "steps": [
+    {
+      "id": "purpose",
+      "title": "목적과 범위",
+      "components": [
+        {"type": "fields", "fields": [
+          {"key": "wp_no", "label": "조서번호", "type": "text", "required": true},
+          {"key": "as_of_date", "label": "대상일(기준일)", "type": "date", "required": true,
+           "help": "기준일부터 만기일까지의 일수를 이 날짜로 계산한다."},
+          {"key": "purpose", "label": "이 절차의 목적", "type": "textarea", "required": true},
+          {"key": "scope", "label": "검사 범위", "type": "textarea", "required": true,
+           "help": "검토한 항목 범위와, 이 절차로 결론내지 않는 범위(잔액의 실재성·금액 대사 등)를 함께 적는다."},
+          {"key": "risk_ref", "label": "관련 위험·계획 조서 참조", "type": "text"},
+          {"key": "materiality_ref", "label": "중요성 참조", "type": "text", "help": "중요성 금액은 이 조서에서 정하지 않는다. 계획 조서의 위치만 참조한다."},
+          {"key": "related_wps", "label": "관련 조서 참조", "type": "textarea",
+           "help": "명세서 대사, 금융기관 조회 등 같은 항목을 다루는 조서의 조서번호와 확인 범위"}
+        ]},
+        {"type": "assertions"}
+      ],
+      "guidance": [
+        {"kind": "why", "type": "보완 설명", "refs": [], "unverified": true,
+         "text": "명세서의 예금·금융상품이 현금및현금성자산, 단기금융상품, 장기금융상품 중 어디에 속하는지는 취득일·만기일·사용제한 같은 조건에 따라 달라진다. 이 절차는 회사가 정한 분류를 증서·약정서 등 자료로 확인하고, 감사인이 판단한 분류와 다르면 그 차이를 기록한다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["KSA2026:330.28"],
+         "text": "이 절차가 대응하는 평가된 위험을 참조로 연결한다. 위험평가 자체는 이 도구의 범위가 아니므로 입력·참조만 한다."},
+        {"kind": "record", "type": "보완 설명", "refs": [],
+         "text": "대상일, 검토한 항목 범위, 적용한 경영진 주장, 참조 조서번호를 적는다. 금액이 명세서·장부와 맞는지는 명세서 대사 조서에서 다루고 여기서는 참조만 한다."}
+      ]
+    },
+    {
+      "id": "materials",
+      "title": "자료 준비·확인",
+      "components": [{"type": "materials"}],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["KSA2026:500.7", "KSA2026:500.9"],
+         "text": "감사증거로 쓸 정보는 관련성과 신뢰성을 고려해야 한다. 명세서처럼 기업이 생산한 정보는 정확성과 완전성에 대한 증거가 필요하다."},
+        {"kind": "where", "type": "보완 설명", "refs": [],
+         "text": "명세서의 항목별 금액과 회사 분류, 예금증서·상품 약정서의 취득일(가입일)·만기일·중도해지 조건, 질권 설정·담보 제공·사용제한 약정, 금융기관 조회 회신의 담보·제한 기재 내용."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "회사가 만든 명세서의 날짜만 보지 말고, 증서·약정서 같은 외부 자료로 취득일과 만기일을 확인한다. 사용제한은 약정서와 금융기관 조회 회신을 함께 본다. 조회 절차 자체는 금융기관 조회 조서에서 다룬다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.9"],
+         "text": "자료명·버전·제공자·입수일·기준일·위치를 남긴다. 자료를 등록한 것과 증거로 확인한 것(확인자·확인일·확인 범위)을 구분한다."}
+      ]
+    },
+    {
+      "id": "classify",
+      "title": "분류 검토표",
+      "components": [{"type": "classify"}],
+      "calcs": ["term_days", "class_totals", "reclass_diff"],
+      "guidance": [
+        {"kind": "why", "type": "보완 설명", "refs": [], "unverified": true,
+         "text": "현금성자산 해당 여부는 기업회계기준서 제1007호(현금흐름표)의 현금성자산 정의에 따라, 유동·비유동 구분은 기업회계기준서 제1001호(재무제표 표시)에 따라 판단한다. 해당 문단은 근거매핑에서 아직 확인하지 않았다."},
+        {"kind": "where", "type": "보완 설명", "refs": [],
+         "text": "항목마다 증서·약정서의 취득일과 만기일, 사용제한 약정 내용, 명세서에 적힌 회사 분류."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "① 만기가 있는 상품은 취득일과 만기일을 입력한다. 프로그램이 취득일→만기일, 대상일→만기일 일수를 계산한다. ② 사용제한 여부를 자료로 확인해 '없음' 또는 '있음'으로 바꾸고, 있으면 내용을 적는다. ③ 회사 분류를 옮겨 적고, 확인한 조건을 바탕으로 감사인 판단 분류와 그 근거를 적는다."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "프로그램은 일수와 분류별 합계만 계산한다. 몇 개월 이내인지, 어느 분류가 맞는지는 판단하지 않으며 분류를 제안하지 않는다. 금액이나 분류가 빈 행이 있으면 분류별 합계를 계산하지 않는다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.9"],
+         "text": "검토한 항목의 식별 특성(계좌 식별값)과 날짜·제한 내용의 근거 위치(파일·시트·셀·페이지)를 행마다 남긴다."}
+      ]
+    },
+    {
+      "id": "findings",
+      "title": "차이·예외 조사",
+      "components": [{"type": "findings"}],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["KSA2026:500.11"],
+         "text": "서로 다른 원천의 정보가 일치하지 않으면, 이를 해결하기 위해 감사절차를 바꾸거나 추가할지 결정해야 한다."},
+        {"kind": "where", "type": "보완 설명", "refs": [],
+         "text": "회사 분류와 감사인 판단 분류가 다른 항목의 증서·약정서, 회사가 분류를 정한 근거, 회사 담당자의 설명과 그 설명을 뒷받침하는 자료."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "분류 차이의 사실(항목·금액·양쪽 분류)을 먼저 기록하고, 회사가 그렇게 분류한 근거를 확인한다. 재분류가 필요하다고 보면 그 금액과 회사의 수정 여부를 후속 확인에 남긴다. 분류 차이가 없어도 사용제한 같은 다른 예외는 직접 추가한다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["KSA2026:230.10", "KSA2026:230.A5"],
+         "text": "담당자와 토의했다면 내용·시기·상대자를 기록한다. 구두 설명 자체는 적절한 근거가 되지 못하므로, 설명만 받은 경우와 자료로 다시 확인한 경우를 구분한다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.11"],
+         "text": "결론과 일관되지 않은 정보를 발견했다면 어떻게 처리했는지 기록한다."}
+      ]
+    },
+    {
+      "id": "conclusion",
+      "title": "수행 기록·결론",
+      "components": [
+        {"type": "fields", "fields": [
+          {"key": "work_performed", "label": "실제 수행 내역", "type": "textarea", "required": true,
+           "help": "어떤 자료의 어디를 보고 무엇을 확인했는지. 예시 문장을 그대로 옮기지 않는다."},
+          {"key": "classify_result", "label": "이번 조서의 분류 검토 결과", "type": "textarea", "required": true,
+           "help": "분류별로 회사 분류와 감사인 판단이 같은지, 다르면 항목과 금액."},
+          {"key": "conclusion", "label": "결론", "type": "textarea", "required": true}
+        ]},
+        {"type": "open_items"}
+      ],
+      "guidance": [
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:330.28"],
+         "text": "절차의 결과와, 결과만으로 분명하지 않은 경우 결론을 기록한다. 아래 남은 작업 목록은 결론과 출력물에 그대로 표시된다."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "분류 검토 결과와 재무제표 표시 금액이 맞는지는 구분해 적는다. 재분류가 필요하다고 판단했지만 회사가 아직 수정하지 않았다면 미해결로 남긴다."},
+        {"kind": "example", "type": "가상 예시", "refs": [],
+         "text": "[결과 예시] K02 정기예금 8,000,000원은 회사가 현금및현금성자산으로 분류했으나, 예금증서상 취득일부터 만기일까지 181일로 확인되어 단기금융상품으로 판단하였다. 사용제한 약정은 없었다. 재분류 필요 금액 8,000,000원은 회사에 수정을 요청하였다."}
+      ]
+    },
+    {
+      "id": "review",
+      "title": "검토·출력",
+      "components": [
+        {"type": "fields", "fields": [
+          {"key": "procedure_status", "label": "절차 수행 상태", "type": "choice", "required": true,
+           "options": ["미착수", "진행 중", "수행 완료", "해당 없음", "대체절차 수행"]},
+          {"key": "na_reason", "label": "해당 없음 사유", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "해당 없음"}},
+          {"key": "alt_procedure", "label": "수행한 대체절차", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "대체절차 수행"}},
+          {"key": "alt_how", "label": "대체절차가 목적을 달성한 방법", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "대체절차 수행"}},
+          {"key": "deviation_reason", "label": "이탈 이유", "type": "textarea", "required": true,
+           "show_if": {"field": "procedure_status", "eq": "대체절차 수행"}},
+          {"key": "performer", "label": "수행자", "type": "text", "required": true},
+          {"key": "performed_date", "label": "수행 종료일", "type": "date", "required": true},
+          {"key": "review_status", "label": "검토 상태", "type": "choice", "required": true,
+           "options": ["미검토", "검토 중", "의견 처리 중", "검토 완료"]},
+          {"key": "reviewer", "label": "검토자", "type": "text",
+           "show_if": {"field": "review_status", "in": ["검토 중", "의견 처리 중", "검토 완료"]}},
+          {"key": "review_date", "label": "검토일", "type": "date",
+           "show_if": {"field": "review_status", "in": ["검토 중", "의견 처리 중", "검토 완료"]}},
+          {"key": "review_scope", "label": "검토 범위", "type": "textarea",
+           "show_if": {"field": "review_status", "in": ["검토 중", "의견 처리 중", "검토 완료"]}}
+        ]},
+        {"type": "review_comments"}
+      ],
+      "guidance": [
+        {"kind": "why", "type": "근거 요약", "refs": ["KSA2026:230.9"],
+         "text": "감사업무의 수행자와 종료일, 검토한 사람·검토일·검토 범위를 기록해야 한다."},
+        {"kind": "how", "type": "근거 요약", "refs": ["KSA2026:230.12"],
+         "text": "요구사항에서 이탈해 다른 절차를 수행했다면, 그 대체절차가 목적을 어떻게 달성했는지와 이탈 이유를 기록한다. 적용 조건이 없어 수행하지 않은 '해당 없음'과 구분한다."},
+        {"kind": "how", "type": "보완 설명", "refs": [],
+         "text": "수행 완료, 발견 사항 처리, 검토 완료는 서로 다른 상태다. 엑셀을 내려받아도 검토 완료로 바뀌지 않는다."},
+        {"kind": "record", "type": "근거 요약", "refs": ["KSA2026:230.A4"],
+         "text": "교체 전 초안은 감사문서에 포함할 필요가 없다. 엑셀은 선택한 저장본 기준으로 만들고, 저장 이력 전체를 나열하지 않는다."}
+      ]
+    }
+  ],
+  "checks": [
+    "required_fields", "materials_status", "materials_confirmed", "classify_blanks", "diff_without_finding",
+    "findings_open", "findings_resolution", "findings_explanation_only",
+    "assertion_change_reason", "review_state", "status_consistency"
+  ],
+  "export": {}
+}

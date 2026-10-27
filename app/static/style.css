@@ -137,6 +137,9 @@ table.recon th, table.recon td { border-bottom: 1px solid var(--line); padding: 
 table.recon th { background: var(--accent-soft); font-size: 12px; text-align: left; font-weight: 600; position: sticky; top: 0; }
 table.recon td.num { text-align: right; font-family: var(--mono); white-space: nowrap; padding-top: 9px; }
 table.recon input, table.recon select { padding: 4px 6px; font-size: 13px; }
+table.recon.classify { table-layout: auto; min-width: 2300px; }
+table.classify td input, table.classify td select { min-width: 104px; }
+table.classify td input[type="date"] { min-width: 132px; }
 .diffcell.nz { color: var(--mark); font-weight: 700; }
 .diffcell.na { color: var(--muted); font-family: var(--font); font-size: 12px; }
 .totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }

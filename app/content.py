@@ -133,9 +133,13 @@ def resolve(binding_id: str, base: Path | None = None) -> dict:
             errors.append(f"알 수 없는 경영진 주장 코드 '{code}'")
     _check_refs("경영진 주장", a, sources, errors)
     a.setdefault("review", dict(DEFAULT_REVIEW))
-    for role in engine.REQUIRED_ROLES:
+    required = t.get("required_documents", engine.REQUIRED_ROLES)
+    for role in required:
         if role not in b.get("documents", {}):
             errors.append(f"자료명 없음: {role}")
+    comps = {comp["type"] for s in steps for comp in s["components"]}
+    if "classify" in comps and not b.get("classify", {}).get("classes"):
+        errors.append("분류 검토 절차에 분류 선택지(classify.classes)가 없음")
     if errors:
         raise ContentError(errors)
 
@@ -156,6 +160,11 @@ def resolve(binding_id: str, base: Path | None = None) -> dict:
         "sources": {sid: {k: v for k, v in s.items() if k != "verified_locations"} | {"locations": s["verified_locations"]}
                     for sid, s in sources.items()},
     }
+    # 기존 콘텐츠의 해시가 바뀌지 않도록, 새 키는 정의된 경우에만 넣는다
+    if "required_documents" in t:
+        resolved["required_documents"] = list(required)
+    if "classify" in b:
+        resolved["classify"] = copy.deepcopy(b["classify"])
     resolved["content_key"] = f"{b['id']}@{b['version']}+{t['id']}@{t['version']}"
     resolved["hash"] = content_hash(resolved)
     return resolved

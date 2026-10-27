@@ -5,3 +5,4 @@ __pycache__/
 *.xlsx
 !content/**
 .venv/
+!samples/sources/**/*.xlsx

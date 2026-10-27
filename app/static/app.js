@@ -71,7 +71,7 @@ document.addEventListener("keydown", (e) => {
 
 // ------------------------------------------------------------------ 상태
 const S = { wp: null, data: null, computed: null, dirty: false, step: "purpose", setTab: null, readOnly: false, seq: 0, timer: null };
-const LABEL = { schedule: "명세서", subledger: "보조부", gl: "총계정원장", other: "기타" };
+const LABEL = { schedule: "명세서", subledger: "보조부", gl: "총계정원장", terms: "증서·약정서", restriction: "사용제한 자료", other: "기타" };
 const KINDS = [["why", "왜 하는가"], ["where", "어디를 보는가"], ["how", "어떻게 확인하는가"], ["record", "조서에 어떻게 기록하는가"], ["example", "작성 예시 (참고용)"]];
 
 window.addEventListener("beforeunload", (e) => { if (S.dirty) { e.preventDefault(); e.returnValue = ""; } });
@@ -293,7 +293,7 @@ function goTo(it) {
   S.step = it.step; renderNav(); renderStep();
   requestAnimationFrame(() => {
     let el = it.ref && $(`[data-ref="${CSS.escape(it.ref)}"]`);
-    if (!el && it.ref?.startsWith("set:")) { S.step = "findings"; renderNav(); renderStep(); el = $(`[data-ref="${CSS.escape(it.ref)}"]`); }
+    if (!el && (it.ref?.startsWith("set:") || it.ref?.startsWith("cls:"))) { S.step = "findings"; renderNav(); renderStep(); el = $(`[data-ref="${CSS.escape(it.ref)}"]`); }
     el = el || $("#step");
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
@@ -361,6 +361,7 @@ const COMPONENTS = {
     return h("div", { class: "block" },
       h("div", { class: "block-head" }, h("h2", {}, "적용 경영진 주장"),
         h("div", { class: "tags" }, h("span", { class: "tag" }, a.type), ...a.refs.map((r) => h("span", { class: "tag src" }, "서식 " + r.split(":")[1])),
+          a.unverified ? h("span", { class: "tag unv" }, "미확인") : null,
           h("span", { class: "tag " + (a.review?.status === "사용자 검토 완료" ? "done" : "draft") }, a.review?.status))),
       chips, h("p", { class: "sub", style: "margin:0" }, a.note),
       h("div", { dataset: { ui: "assertion_changed" } },
@@ -370,14 +371,15 @@ const COMPONENTS = {
   materials() {
     const box = h("div", { class: "block" },
       h("div", { class: "block-head" }, h("h2", {}, "자료 목록"),
-        h("div", { class: "chips" }, ...["schedule", "subledger", "gl", "other"].map((role) =>
+        h("div", { class: "chips" }, ...Object.keys(S.wp.content.documents).map((role) =>
           h("button", { class: "btn small", type: "button", onclick: () => mutate((d) => d.materials.push({
             id: newId("m"), role, name: "", version_label: "", kind: "원본", original_id: "", provider: "", receipt: "요청",
             requested_date: "", received_date: "", as_of_date: S.data.fields.as_of_date || "", location: "", remaining_work: "",
             confirmed: false, confirmed_by: "", confirmed_date: "", confirmed_scope: "", note: "" })) }, "+ " + LABEL[role])))),
       h("p", { class: "sub", style: "margin:0" }, "자료를 '입수'로 등록한 것과 증거로 확인한 것은 다릅니다. 확인했다면 확인자·확인일·확인 범위를 남기세요. 파일은 이 도구에 올리지 않고 위치만 적습니다."));
     const cards = h("div", { class: "cards" });
-    if (!S.data.materials.length) cards.append(h("p", { class: "sub" }, `등록된 자료가 없습니다. ${S.wp.content.documents.schedule}, ${S.wp.content.documents.subledger}, ${S.wp.content.documents.gl}을 등록하세요.`));
+    const docs = Object.entries(S.wp.content.documents).filter(([k]) => k !== "other").map(([, v]) => v);
+    if (!S.data.materials.length) cards.append(h("p", { class: "sub" }, `등록된 자료가 없습니다. ${docs.join(", ")}을 등록하세요.`));
     for (const m of S.data.materials) {
       const p = `materials.#${m.id}`;
       const same = S.data.materials.filter((x) => x.role === m.role && x.id !== m.id);
@@ -480,6 +482,55 @@ const COMPONENTS = {
     return box;
   },
 
+  classify() {
+    const cls = S.data.classify, row = S.wp.content.row, classes = S.wp.content.classify.classes;
+    const extra = row.extra_columns || [];
+    const schedMats = S.data.materials.filter((m) => m.role === "schedule");
+    const box = h("div", { class: "block" }, h("h2", {}, "분류 검토표"),
+      h("p", { class: "sub", style: "margin:0" }, "일수는 프로그램이 계산합니다. 몇 개월 이내인지, 어느 분류가 맞는지는 판단하지 않습니다. 감사인 판단 분류와 근거는 직접 적으세요."),
+      h("div", { class: "fields" },
+        fieldBox("검토에 쓴 명세서 자료", input("classify.schedule_material_id", "choice", { options: schedMats.map((m) => [m.id, `${m.name} ${m.version_label || ""} (${m.kind})`]) }))));
+    const head = ["#", row.id_label, row.name_label, ...extra.map((x) => x.label), "금액", "금액 근거 위치", "만기 구분", "취득일", "만기일",
+      "취득→만기 (일)", "대상일→만기 (일)", "날짜 근거 위치", "사용제한", "제한 내용", "제한 근거 위치", "회사 분류", "감사인 판단 분류", "판단 근거", "재분류 금액", ""];
+    const tbody = h("tbody");
+    cls.rows.forEach((r, i) => {
+      const rp = `classify.rows.#${r.id}`;
+      const dated = r.maturity_type === "만기 있음";
+      tbody.append(h("tr", { dataset: { ref: `crow:${r.id}` } },
+        h("td", { class: "num" }, i + 1),
+        h("td", {}, input(`${rp}.item_id`, "text", { placeholder: "예: K02" })),
+        h("td", {}, input(`${rp}.name`)),
+        ...extra.map((x) => h("td", {}, input(`${rp}.${x.key}`, x.type, { options: x.options }))),
+        h("td", {}, input(`${rp}.amount`, "amount")),
+        h("td", {}, input(`${rp}.amount_loc`)),
+        h("td", {}, input(`${rp}.maturity_type`, "choice", { options: ["만기 있음", "만기 없음"], rerender: true })),
+        h("td", {}, dated ? input(`${rp}.acquired_date`, "date") : null),
+        h("td", {}, dated ? input(`${rp}.maturity_date`, "date") : null),
+        h("td", { class: "num diffcell", dataset: { calc: `cls:${r.id}:acq_days` } }),
+        h("td", { class: "num diffcell", dataset: { calc: `cls:${r.id}:remain_days` } }),
+        h("td", {}, dated ? input(`${rp}.terms_loc`) : null),
+        h("td", {}, input(`${rp}.restricted`, "choice", { options: ["미확인", "없음", "있음"], rerender: true })),
+        h("td", {}, r.restricted === "있음" ? input(`${rp}.restriction_note`, "text", { placeholder: "예: 차입금 담보 질권" }) : null),
+        h("td", {}, input(`${rp}.restriction_loc`)),
+        h("td", {}, input(`${rp}.company_class`, "choice", { options: classes })),
+        h("td", {}, input(`${rp}.auditor_class`, "choice", { options: classes })),
+        h("td", {}, input(`${rp}.basis`, "text", { placeholder: "판단에 쓴 조건" })),
+        h("td", { class: "num diffcell", dataset: { calc: `cls:${r.id}:reclass` } }),
+        h("td", {}, h("button", { class: "btn link", type: "button", onclick: () => mutate((d) => { d.classify.rows = d.classify.rows.filter((x) => x.id !== r.id); }) }, "삭제"))));
+    });
+    if (!cls.rows.length) tbody.append(h("tr", {}, h("td", { colspan: head.length, class: "sub" }, "검토 항목이 없습니다. 아래에서 추가하세요.")));
+    box.append(h("div", { class: "tablewrap" }, h("table", { class: "recon classify" }, h("thead", {}, h("tr", {}, ...head.map((x) => h("th", {}, x)))), tbody)),
+      h("div", {}, h("button", { class: "btn small", type: "button", onclick: () => mutate((d) => d.classify.rows.push({
+        id: newId("c"), item_id: "", name: "", product_type: "", amount: "", amount_loc: "", maturity_type: "", acquired_date: "", maturity_date: "",
+        terms_loc: "", restricted: "미확인", restriction_note: "", restriction_loc: "", company_class: "", auditor_class: "", basis: "", note: "" })) }, "+ 검토 항목 추가")),
+      h("h2", {}, "분류별 합계"),
+      h("div", { class: "totals" }, ...classes.flatMap((k) => [
+        tot(`${k} — 회사 분류`, `clstot:${k}:company`),
+        tot(`${k} — 감사인 판단`, `clstot:${k}:auditor`),
+        tot(`${k} — 차이 (판단−회사)`, `clstot:${k}:diff`, true)])));
+    return box;
+  },
+
   scan() {
     return h("div", { class: "block" }, h("h2", {}, "명세서 스캔 (선택 단계)"),
       h("div", { class: "fields" },
@@ -555,7 +606,8 @@ function addFinding({ link, title, amount, fact }) {
 }
 
 function removeMaterial(id) {
-  const used = S.data.recon.sets.some((s) => s.schedule_material_id === id) || S.data.recon.gl_material_id === id ||
+  const used = (S.data.recon?.sets || []).some((s) => s.schedule_material_id === id) || S.data.recon?.gl_material_id === id ||
+    S.data.classify?.schedule_material_id === id ||
     S.data.findings.some((f) => f.recheck_material_id === id) || S.data.materials.some((m) => m.original_id === id);
   if (used) { toast("대사·발견 사항·수정본에서 쓰는 자료는 삭제할 수 없습니다. 먼저 연결을 풀어주세요."); return; }
   mutate((d) => { d.materials = d.materials.filter((m) => m.id !== id); });
@@ -588,7 +640,16 @@ function applyComputed() {
   $$("[data-calc]").forEach((el) => {
     const parts = el.dataset.calc.split(":");
     let val;
-    if (parts[0] === "row") val = c.sets[parts[1]]?.rows[parts[2]]?.diff;
+    if (parts[0] === "cls") {
+      const r = c.classify?.rows[parts[1]];
+      val = r?.[parts[2]];
+      const days = parts[2] !== "reclass";
+      el.textContent = days && r?.no_maturity ? "해당 없음" : val === null || val === undefined ? "미입력" : fmt(val) + (days ? "일" : "");
+      el.className = "num diffcell" + (val === null || val === undefined ? " na" : !days && val !== 0 ? " nz" : "");
+      return;
+    }
+    if (parts[0] === "clstot") val = c.classify?.totals[parts[1]]?.[parts[2]];
+    else if (parts[0] === "row") val = c.sets[parts[1]]?.rows[parts[2]]?.diff;
     else val = c.sets[parts[1]]?.[parts[2]];
     if (parts[0] === "row") {
       el.textContent = fmt(val);
@@ -624,6 +685,11 @@ function applyComputed() {
 }
 
 function factFor(d) {
+  if (d.key.startsWith("cls:")) {
+    const r = S.computed.classify.rows[d.row];
+    return `금액 ${fmt(r.amount)}원, 회사 분류 ${r.company}, 감사인 판단 분류 ${r.auditor}.` +
+      (r.no_maturity ? " 만기 없음." : ` 취득→만기 ${fmt(r.acq_days)}일, 대상일→만기 ${fmt(r.remain_days)}일.`);
+  }
   const st = S.computed.sets[d.set];
   if (d.row) { const r = st.rows[d.row]; return `명세서 ${fmt(r.schedule)}원, 보조부 ${fmt(r.subledger)}원, 차이 ${fmt(d.amount)}원.`; }
   if (d.key.endsWith("stated_vs_recalc")) return `명세서 표시 합계 ${fmt(st.stated_total)}원, 재계산 합계 ${fmt(st.recalc_total)}원.`;
