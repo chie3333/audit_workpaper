@@ -15,6 +15,15 @@ app = FastAPI(title="실증절차 조서 작성")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+@app.middleware("http")
+async def no_cache_static(request, call_next):
+    """화면 파일을 고친 뒤 브라우저가 옛 파일을 쓰지 않도록 매번 다시 확인하게 한다."""
+    res = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        res.headers["Cache-Control"] = "no-cache"
+    return res
+
+
 def _err(e: Exception):
     if isinstance(e, records.Conflict):
         raise HTTPException(409, str(e))
@@ -62,6 +71,30 @@ def create_engagement(body: dict = Body(...)):
         _err(e)
 
 
+@app.get("/api/engagements/{eid}/ledger")
+def ledger(eid: int):
+    """재무제표 → 정산표 → 계정원장 → 분개장 탐색용. 계산은 engine에서."""
+    try:
+        eng = records.engagement(eid)
+        led = records.load_ledger(eid)
+    except Exception as e:
+        _err(e)
+    if not led:
+        return {"engagement": eng, "ledger": None, "computed": None}
+    return {"engagement": eng, "ledger": led, "computed": engine.compute_ledger(led)}
+
+
+@app.get("/api/engagements/{eid}/ledger/accounts/{code}")
+def account_ledger(eid: int, code: str):
+    led = records.load_ledger(eid)
+    if not led:
+        raise HTTPException(404, "이 감사건에 정산표가 없음")
+    try:
+        return engine.account_ledger(led, code)
+    except KeyError:
+        raise HTTPException(404, f"정산표에 없는 계정과목: {code}")
+
+
 @app.post("/api/workpapers")
 def create_workpaper(body: dict = Body(...)):
     try:
@@ -71,7 +104,7 @@ def create_workpaper(body: dict = Body(...)):
 
 
 def _bundle(wp: dict) -> dict:
-    return wp | {"computed": engine.compute(wp["content"], wp["data"])}
+    return wp | {"computed": engine.compute(wp["content"], wp["data"], wp["ledger"])}
 
 
 @app.get("/api/workpapers/{wid}")
@@ -86,7 +119,7 @@ def get_workpaper(wid: int, rev: int | None = None):
 def preview(wid: int, body: dict = Body(...)):
     try:
         wp = records.load_workpaper(wid)
-        return engine.compute(wp["content"], body["data"])
+        return engine.compute(wp["content"], body["data"], wp["ledger"])
     except Exception as e:
         _err(e)
 

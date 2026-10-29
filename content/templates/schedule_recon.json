@@ -1,6 +1,6 @@
 {
   "id": "schedule_recon",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "명세서 계산검증 및 보조부 대사",
   "_comment": "공통 절차 템플릿. 계정별 설정(bindings)이 자료명·추가 열·계정 안내를 채운다. calc·check·component 식별자는 코드(app/engine.py)에 있는 것만 쓸 수 있다.",
   "steps": [
@@ -19,6 +19,7 @@
           {"key": "related_wps", "label": "관련 조서 참조", "type": "textarea",
            "help": "같은 계정에서 다른 주장을 다루는 조서(실사, 금융기관 조회 등)의 조서번호와 확인 범위"}
         ]},
+        {"type": "accounts"},
         {"type": "assertions"}
       ],
       "guidance": [
@@ -172,7 +173,7 @@
     }
   ],
   "checks": [
-    "required_fields", "materials_status", "materials_confirmed", "recon_blanks", "diff_without_finding",
+    "required_fields", "ledger_link", "materials_status", "materials_confirmed", "recon_blanks", "diff_without_finding",
     "list_check_finding", "findings_open", "findings_resolution", "findings_explanation_only",
     "assertion_change_reason", "scan_undecided", "review_state", "status_consistency"
   ],

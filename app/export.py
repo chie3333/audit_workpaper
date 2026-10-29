@@ -52,6 +52,20 @@ def _amount_cell(raw):
     return v
 
 
+def _won(v) -> str:
+    return "미입력" if v is None else f"{v:,}"
+
+
+def _chg(amount, rate, prior) -> str:
+    """증감액·증감률. 증가 ▲, 감소 ▼ (계산은 engine)."""
+    if amount is None:
+        return "증감 미입력"
+    mark = "▲ " if amount > 0 else "▼ " if amount < 0 else ""
+    r = f"{abs(rate):.1f}%" if rate is not None else ("신규" if prior == 0 and amount else "—")
+    rmark = mark if rate is not None else ""
+    return f"증감 {mark}{abs(amount):,} ({rmark}{r})"
+
+
 def _lines(text: str, per_line: int = CHARS_PER_LINE) -> int:
     if not text:
         return 1
@@ -301,7 +315,7 @@ def _classify_tables(sh: Sheet, data: dict, content: dict, fields: dict) -> dict
 def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     """엑셀 바이트와, 테스트용 셀 위치 지도를 돌려준다."""
     content, data = wp["content"], wp["data"]
-    computed = computed or engine.compute(content, data)
+    computed = computed or engine.compute(content, data, wp.get("ledger"))
     fields = data["fields"]
     mats = {m["id"]: m for m in data.get("materials", [])}
     names = {a["code"]: a["name"] for a in content["assertion_list"]}
@@ -368,6 +382,18 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     sh.kv("관련 위험·계획 조서", fields.get("risk_ref"))
     sh.kv("중요성 참조", fields.get("materiality_ref"))
     sh.kv("관련 조서", fields.get("related_wps"))
+    link = computed.get("linked")
+    if link is not None:
+        if not link["available"]:
+            sh.kv("정산표 계정과목", "이 감사건에 정산표 없음")
+        elif not link["rows"]:
+            sh.kv("정산표 계정과목", "(선택하지 않음)", fill=WARN)
+        else:
+            txt = "\n".join(f"{r['code']} {r['name']} ({r['fs_line']}) — 전기말 {_won(r['prior'])} · 수정후 {_won(r['adjusted'])} · "
+                            f"{_chg(r['change'], r['change_rate'], r['prior'])}" for r in link["rows"])
+            txt += (f"\n합계 — 전기말 {_won(link['prior'])} · 수정후 {_won(link['adjusted'])} · "
+                    f"{_chg(link['change'], link['change_rate'], link['prior'])}  (참조값. 조서 입력값을 대신하지 않음)")
+            sh.kv("정산표 계정과목", txt)
     sh.kv("근거", "감사기준서 230 문단 9, 500 문단 7·9 (회계감사기준 2026년 7월 개정 전문). 분류 기준(기업회계기준서 제1007호·제1001호) 문단은 미확인" if is_cls else
           "서식 A!A17–A18 · 감사기준서 330 문단 20·30, 500 문단 9 (회계감사기준 2026년 7월 개정 전문)")
 

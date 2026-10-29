@@ -212,6 +212,51 @@ def classification(resolved):
     return d
 
 
+def _acct(code, name, fs_line, statement, category, prior, unadjusted, adjustment, adjusted):
+    return {"code": code, "name": name, "fs_line": fs_line, "statement": statement, "category": category,
+            "prior": prior, "unadjusted": unadjusted, "adjustment": adjustment, "adjusted": adjusted}
+
+
+def _je(je_no, date, desc, lines, kind="일반"):
+    """lines: [(계정코드, 차변, 대변)]"""
+    return [{"id": f"{je_no}-{i}", "je_no": je_no, "line": i, "date": date, "code": code, "description": desc,
+             "debit": dr, "credit": cr, "kind": kind} for i, (code, dr, cr) in enumerate(lines, 1)]
+
+
+def ledger():
+    """가상 차이(주)의 정산표·분개장. 금액은 계정의 정상 잔액 방향 기준 양수.
+
+    보통예금(K01)·정기예금(K02) 수정후 잔액은 명세서 대사의 보조원장·총계정원장(합계 20,500,000)과 같고,
+    정기예금 가입(J006, 2025-11-15)은 분류 검토 A-210의 예금증서 가입일과 같다.
+    손익 계정의 전기말 열은 전기 금액(비교용)이다.
+    """
+    accounts = [
+        _acct("10301", "보통예금", "현금및현금성자산", "재무상태표", "자산", 15_000_000, 12_500_000, 0, 12_500_000),
+        _acct("10302", "정기예금", "현금및현금성자산", "재무상태표", "자산", 0, 8_000_000, 0, 8_000_000),
+        _acct("10800", "외상매출금", "매출채권", "재무상태표", "자산", 15_000_000, 18_000_000, 0, 18_000_000),
+        _acct("25100", "외상매입금", "매입채무", "재무상태표", "부채", 6_000_000, 7_500_000, 0, 7_500_000),
+        _acct("26200", "미지급비용", "기타유동부채", "재무상태표", "부채", 0, 0, 300_000, 300_000),
+        _acct("33100", "자본금", "자본금", "재무상태표", "자본", 10_000_000, 10_000_000, 0, 10_000_000),
+        _acct("37500", "이월이익잉여금", "이익잉여금", "재무상태표", "자본", 14_000_000, 14_000_000, 0, 14_000_000),
+        _acct("40100", "상품매출", "매출액", "손익계산서", "수익", 25_000_000, 30_000_000, 0, 30_000_000),
+        _acct("45100", "상품매출원가", "매출원가", "손익계산서", "비용", 17_000_000, 20_000_000, 0, 20_000_000),
+        _acct("80100", "급여", "판매비와관리비", "손익계산서", "비용", 3_000_000, 3_000_000, 300_000, 3_300_000),
+    ]
+    journal = (
+        _je("J001", "2025-03-15", "상품 외상 매출 (가상)", [("10800", 30_000_000, 0), ("40100", 0, 30_000_000)])
+        + _je("J002", "2025-04-10", "외상매출금 회수 (가상)", [("10301", 27_000_000, 0), ("10800", 0, 27_000_000)])
+        + _je("J003", "2025-05-20", "상품 외상 매입·매출원가 대체 (가상)", [("45100", 20_000_000, 0), ("25100", 0, 20_000_000)])
+        + _je("J004", "2025-06-30", "외상매입금 지급 (가상)", [("25100", 18_500_000, 0), ("10301", 0, 18_500_000)])
+        + _je("J005", "2025-09-01", "급여 지급 (가상)", [("80100", 3_000_000, 0), ("10301", 0, 3_000_000)])
+        + _je("J006", "2025-11-15", "정기예금 가입 K02 (가상)", [("10302", 8_000_000, 0), ("10301", 0, 8_000_000)])
+        + _je("A001", "2025-12-31", "12월 급여 미지급 계상 (가상 수정분개)", [("80100", 300_000, 0), ("26200", 0, 300_000)], kind="수정분개")
+    )
+    return {"source": "가상 데이터", "net_income_line": "이익잉여금", "accounts": accounts, "journal": journal}
+
+
+# 정산표·분개장을 넣을 회사와, 그 회사 조서가 참조할 계정과목
+LEDGER_CASES = {"가상 차이(주)": ["10301", "10302"]}
+
 CASES = [
     ("가상 정상(주)", normal),
     ("가상 차이(주)", difference),
@@ -231,12 +276,20 @@ def seed() -> list[int]:
         cid = records.create_company(name, is_sample=True)
         eid = records.create_engagement(cid, PERIOD)
         engagements[name] = eid
+        if name in LEDGER_CASES:
+            records.save_ledger(eid, ledger(), source="가상 데이터")
         wid = records.create_workpaper(eid, BINDING)
-        records.save_workpaper(wid, builder(resolved), base_rev=1, note="가상 사례 입력")
+        records.save_workpaper(wid, _link(builder(resolved), name), base_rev=1, note="가상 사례 입력")
         ids.append(wid)
     cls_resolved = content_mod.resolve(CLS_BINDING)
     for name, builder in CLASSIFICATION_CASES:
         wid = records.create_workpaper(engagements[name], CLS_BINDING)
-        records.save_workpaper(wid, builder(cls_resolved), base_rev=1, note="가상 사례 입력")
+        records.save_workpaper(wid, _link(builder(cls_resolved), name), base_rev=1, note="가상 사례 입력")
         ids.append(wid)
     return ids
+
+
+def _link(data: dict, company: str) -> dict:
+    if company in LEDGER_CASES:
+        data["linked_accounts"] = list(LEDGER_CASES[company])
+    return data

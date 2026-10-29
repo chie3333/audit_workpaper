@@ -20,9 +20,9 @@ CHECKS = {
     "required_fields", "materials_status", "materials_confirmed", "recon_blanks",
     "diff_without_finding", "list_check_finding", "findings_open", "findings_resolution",
     "findings_explanation_only", "assertion_change_reason", "scan_undecided",
-    "review_state", "status_consistency", "classify_blanks",
+    "review_state", "status_consistency", "classify_blanks", "ledger_link",
 }
-COMPONENTS = {"fields", "assertions", "materials", "recon", "scan", "classify", "findings", "open_items", "review_comments"}
+COMPONENTS = {"fields", "assertions", "materials", "accounts", "recon", "scan", "classify", "findings", "open_items", "review_comments"}
 FIELD_TYPES = {"text", "textarea", "date", "choice", "amount"}
 
 MATERIAL_ROLES = ["schedule", "subledger", "gl", "other"]
@@ -31,6 +31,10 @@ RECEIPT = ["요청 전", "요청", "입수", "입수 불가"]
 FINDING_STATUS = ["미해결", "후속 확인 중", "처리 완료"]
 EXPLANATION = ["없음", "담당자 설명만", "자료로 재확인"]
 MATURITY = ["만기 있음", "만기 없음"]
+# 정산표 계정 분류별 정상 잔액 방향. 차변 쪽은 +1, 대변 쪽은 -1 (정산표 금액은 정상 잔액 방향의 양수로 적는다)
+CATEGORY_SIDE = {"자산": 1, "비용": 1, "부채": -1, "자본": -1, "수익": -1}
+TB_COLUMNS = ["prior", "unadjusted", "adjustment", "adjusted"]
+JE_KINDS = ["일반", "수정분개"]
 RESTRICTION = ["미확인", "없음", "있음"]
 
 _AMOUNT_RE = re.compile(r"^-?\d+$")
@@ -233,8 +237,184 @@ def classify_diffs(data: dict, calc: dict | None) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------- 정산표·재무제표·원장·분개장
+def _sum(vals):
+    """하나라도 None이면 None. 빈칸을 0으로 보지 않는다."""
+    vals = list(vals)
+    return None if any(v is None for v in vals) else sum(vals)
+
+
+def _sub(a, b):
+    return None if a is None or b is None else a - b
+
+
+def change_rate(change, prior):
+    """증감률(%) = 증감액 ÷ |전기|. 전기가 0이거나 빈칸이면 계산하지 않는다(None). 소수 첫째 자리."""
+    if change is None or not prior:
+        return None
+    return round(change / abs(prior) * 100, 1)
+
+
+def compute_ledger(ledger: dict) -> dict:
+    """정산표·분개장 계산. 정산표 금액은 계정의 정상 잔액 방향 기준 양수다.
+
+    - 계정별: 변동 = 수정후 − 전기말, 수정후 − (수정전 + 수정분개)
+    - 분개장 대조: 기초(재무상태표 계정은 전기말, 손익 계정은 0) + 일반 분개 = 수정전, 수정분개 합 = 수정분개
+    - 재무제표: 표시 항목별 합계. 손익 계정의 전기말 열은 전기 금액(비교용)이다.
+      당기순이익은 net_income_line(예: 이익잉여금) 당기 금액에 더한다.
+    """
+    accts = ledger.get("accounts", [])
+    by_code = {a["code"]: a for a in accts}
+    journal = ledger.get("journal", [])
+    errors = []
+
+    # 분개장: 전표별 차대 합계와 계정별 발생액(차변 기준 부호)
+    je, flow = {}, {}
+    for ln in journal:
+        dr, e1 = parse_amount(ln.get("debit"))
+        cr, e2 = parse_amount(ln.get("credit"))
+        for k, e in (("debit", e1), ("credit", e2)):
+            if e:
+                errors.append(("journal", ln.get("id"), f"{k}: {e}"))
+        # 분개 라인은 차변·대변 중 한쪽만 적으므로 빈 쪽은 0원이다. 형식 오류는 None으로 남겨 합계를 막는다.
+        dr = None if e1 else (dr or 0)
+        cr = None if e2 else (cr or 0)
+        kind = ln.get("kind") or "일반"
+        g = je.setdefault(ln["je_no"], {"je_no": ln["je_no"], "date": ln.get("date"), "kind": kind, "lines": [], "debit": 0, "credit": 0})
+        g["lines"].append(ln["id"])
+        g["debit"] = _sum([g["debit"], dr])
+        g["credit"] = _sum([g["credit"], cr])
+        f = flow.setdefault(ln.get("code"), {"일반": 0, "수정분개": 0})
+        f[kind] = _sum([f.get(kind, 0), _sub(dr, cr)])
+        if ln.get("code") not in by_code:
+            errors.append(("journal", ln.get("id"), f"정산표에 없는 계정 '{ln.get('code')}'"))
+    for g in je.values():
+        g["diff"] = _sub(g["debit"], g["credit"])
+
+    rows = {}
+    for a in accts:
+        side = CATEGORY_SIDE.get(a.get("category"))
+        if side is None:
+            errors.append(("account", a["code"], f"알 수 없는 계정 분류 '{a.get('category')}'"))
+            side = 1
+        v = {}
+        for col in TB_COLUMNS:
+            v[col], err = parse_amount(a.get(col))
+            if err:
+                errors.append(("account", a["code"], f"{col}: {err}"))
+        is_bs = a.get("statement") == "재무상태표"
+        opening = v["prior"] if is_bs else 0
+        f = flow.get(a["code"], {"일반": 0, "수정분개": 0})
+        gen = None if f["일반"] is None else f["일반"] * side
+        adj = None if f["수정분개"] is None else f["수정분개"] * side
+        led_unadj = None if opening is None or gen is None else opening + gen
+        led_adj = None if led_unadj is None or adj is None else led_unadj + adj
+        rows[a["code"]] = {
+            **v, "side": side, "is_bs": is_bs, "opening": opening,
+            "change": _sub(v["adjusted"], v["prior"]),
+            "change_rate": change_rate(_sub(v["adjusted"], v["prior"]), v["prior"]),
+            "adjusted_check": _sub(v["adjusted"], _sum([v["unadjusted"], v["adjustment"]])),
+            "journal_general": gen, "journal_adjustment": adj,
+            "ledger_unadjusted": led_unadj, "ledger_adjusted": led_adj,
+            "unadjusted_vs_journal": _sub(v["unadjusted"], led_unadj),
+            "adjustment_vs_journal": _sub(v["adjustment"], adj),
+        }
+
+    # 시산표 차대 합계 (수정전·수정후). 전기말 열은 손익이 마감 전 전기 금액이라 차대 대조하지 않는다.
+    tb_totals = {}
+    for col in ("unadjusted", "adjusted"):
+        dr = _sum(rows[c][col] for c in rows if rows[c]["side"] == 1)
+        cr = _sum(rows[c][col] for c in rows if rows[c]["side"] == -1)
+        tb_totals[col] = {"debit": dr, "credit": cr, "diff": _sub(dr, cr)}
+
+    # 재무제표
+    ni_line = ledger.get("net_income_line")
+    lines, order = {}, []
+    for a in accts:
+        key = (a.get("statement"), a.get("fs_line"))
+        if key not in lines:
+            lines[key] = {"statement": key[0], "name": key[1], "category": a.get("category"), "accounts": []}
+            order.append(key)
+        lines[key]["accounts"].append(a["code"])
+    rev = _sum(rows[c]["adjusted"] for c in rows if by_code[c].get("category") == "수익")
+    exp = _sum(rows[c]["adjusted"] for c in rows if by_code[c].get("category") == "비용")
+    rev_p = _sum(rows[c]["prior"] for c in rows if by_code[c].get("category") == "수익")
+    exp_p = _sum(rows[c]["prior"] for c in rows if by_code[c].get("category") == "비용")
+    ni, ni_p = _sub(rev, exp), _sub(rev_p, exp_p)
+    fs_lines = []
+    for key in order:
+        ln = lines[key]
+        cur = _sum(rows[c]["adjusted"] for c in ln["accounts"])
+        pri = _sum(rows[c]["prior"] for c in ln["accounts"])
+        inc_ni = ln["statement"] == "재무상태표" and ln["name"] == ni_line
+        if inc_ni:
+            cur = None if cur is None or ni is None else cur + ni
+        tb_sums = {col: _sum(rows[c][col] for c in ln["accounts"]) for col in TB_COLUMNS + ["change"]}
+        tb_sums["change_rate"] = change_rate(tb_sums["change"], tb_sums["prior"])
+        fs_lines.append({**ln, "current": cur, "prior": pri, "change": _sub(cur, pri),
+                         "change_rate": change_rate(_sub(cur, pri), pri), "includes_net_income": inc_ni, "tb_sums": tb_sums})
+
+    def total(stmt, cat, col):
+        return _sum(l[col] for l in fs_lines if l["statement"] == stmt and l["category"] == cat)
+
+    bs = {}
+    for col in ("current", "prior"):
+        assets, liab, eq = total("재무상태표", "자산", col), total("재무상태표", "부채", col), total("재무상태표", "자본", col)
+        le = _sum([liab, eq])
+        bs[col] = {"자산": assets, "부채": liab, "자본": eq, "부채와자본": le, "diff": _sub(assets, le)}
+    bs["change"] = {k: _sub(bs["current"][k], bs["prior"][k]) for k in ("자산", "부채", "자본", "부채와자본")}
+    bs["change_rate"] = {k: change_rate(bs["change"][k], bs["prior"][k]) for k in bs["change"]}
+    return {
+        "accounts": rows,
+        "tb_totals": tb_totals,
+        "fs_lines": fs_lines,
+        "bs_totals": bs,
+        "income": {"revenue": rev, "expense": exp, "net_income": ni,
+                   "revenue_prior": rev_p, "expense_prior": exp_p, "net_income_prior": ni_p,
+                   "net_income_change": _sub(ni, ni_p), "net_income_change_rate": change_rate(_sub(ni, ni_p), ni_p)},
+        "net_income_line": ni_line,
+        "journal": je,
+        "errors": errors,
+    }
+
+
+def account_ledger(ledger: dict, code: str) -> dict:
+    """계정원장: 기초 잔액에서 분개 라인을 날짜·전표 순으로 쌓은 잔액(정상 잔액 방향)."""
+    acct = next((a for a in ledger.get("accounts", []) if a["code"] == code), None)
+    if not acct:
+        raise KeyError(code)
+    c = compute_ledger(ledger)["accounts"][code]
+    side = c["side"]
+    bal = c["opening"]
+    out = []
+    lines = sorted((ln for ln in ledger.get("journal", []) if ln.get("code") == code),
+                   key=lambda ln: (ln.get("kind") == "수정분개", ln.get("date") or "", ln["je_no"], ln.get("line", 0)))
+    for ln in lines:
+        dr, _ = parse_amount(ln.get("debit"))
+        cr, _ = parse_amount(ln.get("credit"))
+        bal = None if bal is None else bal + ((dr or 0) - (cr or 0)) * side
+        out.append({**ln, "debit": dr or 0, "credit": cr or 0, "balance": bal})
+    return {"account": acct, "calc": c, "lines": out, "closing": bal, "closing_vs_adjusted": _sub(bal, c["adjusted"])}
+
+
+def linked_accounts(ledger: dict | None, codes: list[str]) -> dict:
+    """조서가 참조하는 정산표 계정과목의 금액과 합계."""
+    if not ledger:
+        return {"available": False, "rows": [], "missing": list(codes), "prior": None, "adjusted": None, "change": None}
+    calc = compute_ledger(ledger)["accounts"]
+    names = {a["code"]: a for a in ledger.get("accounts", [])}
+    rows = [{"code": c, "name": names[c]["name"], "fs_line": names[c].get("fs_line"),
+             "prior": calc[c]["prior"], "adjusted": calc[c]["adjusted"], "change": calc[c]["change"],
+             "change_rate": calc[c]["change_rate"]} for c in codes if c in calc]
+    prior = _sum(r["prior"] for r in rows) if rows else None
+    change = _sum(r["change"] for r in rows) if rows else None
+    return {"available": True, "rows": rows, "missing": [c for c in codes if c not in calc],
+            "prior": prior, "adjusted": _sum(r["adjusted"] for r in rows) if rows else None,
+            "change": change, "change_rate": change_rate(change, prior)}
+
+
 # ---------------------------------------------------------------- 전체 계산
-def compute(content: dict, data: dict) -> dict:
+def compute(content: dict, data: dict, ledger: dict | None = None) -> dict:
     fields = data.get("fields", {})
     visible = {f["key"]: eval_cond(f.get("show_if"), fields) for _, f in iter_fields(content)}
 
@@ -263,7 +443,8 @@ def compute(content: dict, data: dict) -> dict:
         "show_findings_hint": bool(diffs),
     }
 
-    items = run_checks(content, data, visible, calc_sets, diffs)
+    link = linked_accounts(ledger, data["linked_accounts"]) if "linked_accounts" in data else None
+    items = run_checks(content, data, visible, calc_sets, diffs, link)
     findings = data.get("findings", [])
     f_counts = {s: sum(1 for f in findings if f.get("status") == s) for s in FINDING_STATUS}
     if not findings:
@@ -278,6 +459,7 @@ def compute(content: dict, data: dict) -> dict:
         "sets": calc_sets,
         "active_set": active_id,
         "classify": cls_calc,
+        "linked": link,
         "diffs": diffs,
         "ui": ui,
         "open_items": items,
@@ -333,7 +515,7 @@ def _item(level, category, step, message, ref=None):
     return {"level": level, "category": category, "step": step, "message": message, "ref": ref}
 
 
-def run_checks(content, data, visible, calc_sets, diffs) -> list[dict]:
+def run_checks(content, data, visible, calc_sets, diffs, link=None) -> list[dict]:
     fields = data.get("fields", {})
     enabled = set(content.get("checks", []))
     items: list[dict] = []
@@ -455,6 +637,19 @@ def run_checks(content, data, visible, calc_sets, diffs) -> list[dict]:
             items.append(_item("block", "미입력", "classify", f"콘텐츠에 없는 분류 '{k}'"))
         for rid, fld, err in c["errors"]:
             items.append(_item("block", "미입력", "classify", f"형식 오류({err})", f"crow:{rid}"))
+
+    if "ledger_link" in enabled and link is not None:
+        if not link["available"]:
+            items.append(_item("info", "정산표", "purpose", "이 감사건에 정산표가 없음 — 계정과목 참조 없이 작성"))
+        elif not data.get("linked_accounts"):
+            items.append(_item("warn", "정산표", "purpose", "이 조서가 다루는 정산표 계정과목을 선택하지 않음"))
+        for c in link["missing"] if link["available"] else []:
+            items.append(_item("warn", "정산표", "purpose", f"정산표에 없는 계정과목 '{c}'를 참조함"))
+        if link["available"] and "recon" in data and link["adjusted"] is not None:
+            gl, _ = parse_amount(data["recon"].get("gl_balance"))
+            if gl is not None and gl != link["adjusted"]:
+                items.append(_item("warn", "정산표", "recon",
+                                   f"정산표 수정후 합계 {link['adjusted']:,}원과 입력한 총계정원장 잔액 {gl:,}원이 다름 (차이 {gl - link['adjusted']:,}원)"))
 
     if "diff_without_finding" in enabled:
         for d in diffs:

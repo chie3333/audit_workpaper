@@ -1,8 +1,9 @@
 {
   "id": "cash.classification_review",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "template": "classification_review",
   "account": "현금및현금성자산·장단기금융상품",
+  "ledger_fs_lines": ["현금및현금성자산", "단기금융상품", "장기금융상품"],
   "title": "현금및현금성자산·장단기금융상품 분류 검토 (만기·사용제한)",
   "form_ref": null,
   "assertions": {

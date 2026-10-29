@@ -165,6 +165,8 @@ def resolve(binding_id: str, base: Path | None = None) -> dict:
         resolved["required_documents"] = list(required)
     if "classify" in b:
         resolved["classify"] = copy.deepcopy(b["classify"])
+    if "ledger_fs_lines" in b:
+        resolved["ledger_fs_lines"] = list(b["ledger_fs_lines"])
     resolved["content_key"] = f"{b['id']}@{b['version']}+{t['id']}@{t['version']}"
     resolved["hash"] = content_hash(resolved)
     return resolved
