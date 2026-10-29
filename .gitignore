@@ -6,3 +6,4 @@ __pycache__/
 !content/**
 .venv/
 !samples/sources/**/*.xlsx
+.claude/
