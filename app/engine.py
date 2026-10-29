@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime
 from typing import Any
 
@@ -269,15 +270,39 @@ def _adjustment_lines(ledger: dict) -> list[dict]:
     return out
 
 
-def net_income_line(ledger: dict) -> str | None:
-    """당기순이익을 더해 보여줄 재무상태표 표시 항목. 지정이 없으면 이름에 '이익잉여금'이 든 자본 항목."""
+_NAME_STRIP = re.compile(r"[\s·ㆍ.,()\[\]{}\-_/]")
+
+
+def normalize_name(name: str) -> str:
+    """표시 항목 이름 비교용: 띄어쓰기·가운뎃점·괄호 등을 뺀다."""
+    return _NAME_STRIP.sub("", unicodedata.normalize("NFC", name or ""))
+
+
+def match_group(row: dict, groups: list[dict]) -> tuple[str | None, str]:
+    """표시 항목의 공통 계정 분류: (분류 id, '직접'|'자동'|'없음').
+
+    직접 지정(row['group'])이 있으면 그것을 쓴다(빈 문자열은 '분류 없음'으로 직접 정한 것).
+    자동은 이름(정규화)이 분류 이름이나 별칭과 같고, 재무제표·분류(자산 등)도 같을 때만 연결한다.
+    """
+    if "group" in row and row["group"] is not None:
+        return (row["group"] or None), "직접"
+    key = normalize_name(row.get("name"))
+    for g in groups:
+        if g["statement"] == row.get("statement") and g["category"] == row.get("category") and \
+                key in {normalize_name(n) for n in [g["name"], *g.get("aliases", [])]}:
+            return g["id"], "자동"
+    return None, "없음"
+
+
+def net_income_line(ledger: dict, groups: list[dict] | None = None) -> str | None:
+    """당기순이익을 더해 보여줄 재무상태표 표시 항목. 지정이 없으면 공통 분류가 이익잉여금인 자본 항목."""
     if ledger.get("net_income_line"):
         return ledger["net_income_line"]
-    return next((r["name"] for r in ledger.get("fs") or [] if r["statement"] == "재무상태표"
-                 and r["category"] == "자본" and "이익잉여금" in r["name"]), None)
+    return next((r["name"] for r in ledger.get("fs") or [] if r["statement"] == "재무상태표" and r["category"] == "자본"
+                 and match_group(r, groups or [])[0] == "retained_earnings"), None)
 
 
-def compute_ledger(ledger: dict) -> dict:
+def compute_ledger(ledger: dict, groups: list[dict] | None = None) -> dict:
     """재무제표·시산표·수정분개로 정산표를 만든다. 금액은 계정의 정상 잔액 방향 기준(차감 계정은 음수).
 
     - 계정: 수정분개 = 앱 수정분개 합계, 수정후 = 당기(회사 시산표) + 수정분개, 증감 = 수정후 − 전기말
@@ -381,7 +406,7 @@ def compute_ledger(ledger: dict) -> dict:
         issues.append(_issue("warn", f"회사 시산표 차변·대변 합계가 {tb_totals['unadjusted']['diff']:,}원 다름"))
 
     ni = {col: _sub(by_cat("수익", col), by_cat("비용", col)) for col in ("prior", "unadjusted", "adjusted")}
-    ni_line = net_income_line(ledger)
+    ni_line = net_income_line(ledger, groups)
     if fs_rows and ni_line not in lines_by_name:
         issues.append(_issue("warn", "당기순이익을 더할 이익잉여금 표시 항목을 찾지 못함 — 재무상태표 합계가 맞지 않을 수 있음"))
 
@@ -399,8 +424,10 @@ def compute_ledger(ledger: dict) -> dict:
             adjustment = _sum([adjustment, _sub(ni["adjusted"], ni["unadjusted"])])
         rep_prior, _ = parse_amount(r.get("prior"))
         rep_cur, _ = parse_amount(r.get("current"))
+        gid, gsrc = match_group(r, groups or [])
         line = {
             "name": r["name"], "statement": r["statement"], "category": r["category"], "accounts": codes, "loc": r.get("loc"),
+            "group": gid, "group_source": gsrc,
             "reported_prior": rep_prior, "reported_current": rep_cur,
             "tb_prior": tb["prior"], "tb_current": tb_current,
             "fs_vs_tb_prior": _sub(rep_prior, tb["prior"]), "fs_vs_tb_current": _sub(rep_cur, tb_current),
@@ -437,6 +464,9 @@ def compute_ledger(ledger: dict) -> dict:
         issues.insert(0, _issue("block", "재무제표를 올리지 않음"))
     if not accts:
         issues.insert(0, _issue("block", "시산표를 올리지 않음"))
+    line_group = {l["name"]: l["group"] for l in fs_lines}
+    for r in rows.values():
+        r["group"] = line_group.get(r["fs_line"]) if r["mapped"] else None
     return {
         "ready": bool(fs_rows and accts),
         "has_journal": has_journal,

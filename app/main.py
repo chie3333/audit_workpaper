@@ -88,8 +88,9 @@ def ledger(eid: int):
     except Exception as e:
         _err(e)
     led = led or {"fs": [], "accounts": [], "adjustments": [], "journal": [], "sources": {}}
-    return {"engagement": eng, "ledger": led, "computed": engine.compute_ledger(led),
-            "procedures": content.list_bindings()}
+    groups = content.load_account_groups()
+    return {"engagement": eng, "ledger": led, "computed": engine.compute_ledger(led, groups),
+            "procedures": content.list_bindings(), "account_groups": groups}
 
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -155,6 +156,25 @@ def adjustments(eid: int, body: dict = Body(...)):
     return ledger(eid)
 
 
+@app.post("/api/engagements/{eid}/groups")
+def fs_groups(eid: int, body: dict = Body(...)):
+    """표시 항목 → 공통 계정 분류를 직접 정한다. body: {"표시 항목": "분류 id" | "" (분류 없음) | null (자동으로 되돌림)}"""
+    known = {g["id"] for g in content.load_account_groups()}
+    bad = [v for v in body.values() if v and v not in known]
+    if bad:
+        raise HTTPException(400, f"공통 계정 분류에 없는 id: {bad}")
+
+    def apply(led):
+        for r in led.get("fs", []):
+            if r["name"] in body:
+                if body[r["name"]] is None:
+                    r.pop("group", None)
+                else:
+                    r["group"] = body[r["name"]]
+    records.update_ledger(eid, apply)
+    return ledger(eid)
+
+
 @app.post("/api/engagements/{eid}/settings")
 def ledger_settings(eid: int, body: dict = Body(...)):
     records.update_ledger(eid, lambda led: led.__setitem__("net_income_line", body.get("net_income_line") or None))
@@ -182,7 +202,10 @@ def create_workpaper(body: dict = Body(...)):
 
 
 def _bundle(wp: dict) -> dict:
-    return wp | {"computed": engine.compute(wp["content"], wp["data"], wp["ledger"])}
+    groups = {}
+    if wp["ledger"] and wp["ledger"].get("accounts"):
+        groups = {c: a["group"] for c, a in engine.compute_ledger(wp["ledger"], content.load_account_groups())["accounts"].items()}
+    return wp | {"computed": engine.compute(wp["content"], wp["data"], wp["ledger"]), "account_group_of": groups}
 
 
 @app.get("/api/workpapers/{wid}")

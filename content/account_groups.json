@@ -1,0 +1,31 @@
+{
+  "_comment": "공통 계정 분류. 재무제표 표시 항목을 이 분류에 연결하고, 절차(계정 설정)는 표시 항목 이름이 아니라 이 분류로 연결한다. 표시 항목 이름은 띄어쓰기·가운뎃점·괄호를 뺀 뒤 name 또는 aliases와 같으면 자동 연결되고, 앱에서 직접 바꿀 수 있다. 이 목록은 앱 안의 분류이며 법정 계정과목표가 아니다.",
+  "version": "0.1.0",
+  "groups": [
+    {"id": "cash", "name": "현금및현금성자산", "statement": "재무상태표", "category": "자산",
+     "aliases": ["현금및현금등가물", "현금성자산", "현금및예금"]},
+    {"id": "short_term_financial", "name": "단기금융상품", "statement": "재무상태표", "category": "자산",
+     "aliases": ["단기금융자산", "단기예금", "기타유동금융자산"]},
+    {"id": "long_term_financial", "name": "장기금융상품", "statement": "재무상태표", "category": "자산",
+     "aliases": ["장기금융자산", "장기예금", "기타비유동금융자산"]},
+    {"id": "trade_receivables", "name": "매출채권", "statement": "재무상태표", "category": "자산",
+     "aliases": ["매출채권및기타채권", "외상매출금", "받을어음"]},
+    {"id": "other_receivables", "name": "기타채권", "statement": "재무상태표", "category": "자산",
+     "aliases": ["미수금", "기타유동채권", "기타수취채권"]},
+    {"id": "inventories", "name": "재고자산", "statement": "재무상태표", "category": "자산", "aliases": []},
+    {"id": "ppe", "name": "유형자산", "statement": "재무상태표", "category": "자산", "aliases": []},
+    {"id": "intangibles", "name": "무형자산", "statement": "재무상태표", "category": "자산", "aliases": []},
+    {"id": "trade_payables", "name": "매입채무", "statement": "재무상태표", "category": "부채",
+     "aliases": ["매입채무및기타채무", "외상매입금", "지급어음"]},
+    {"id": "other_payables", "name": "기타채무", "statement": "재무상태표", "category": "부채",
+     "aliases": ["미지급금", "기타유동부채", "미지급비용", "기타지급채무"]},
+    {"id": "borrowings", "name": "차입금", "statement": "재무상태표", "category": "부채",
+     "aliases": ["단기차입금", "장기차입금", "유동성장기차입금"]},
+    {"id": "share_capital", "name": "자본금", "statement": "재무상태표", "category": "자본", "aliases": []},
+    {"id": "retained_earnings", "name": "이익잉여금", "statement": "재무상태표", "category": "자본",
+     "aliases": ["이익잉여금결손금", "결손금", "미처분이익잉여금"]},
+    {"id": "revenue", "name": "매출액", "statement": "손익계산서", "category": "수익", "aliases": ["수익", "영업수익", "매출"]},
+    {"id": "cost_of_sales", "name": "매출원가", "statement": "손익계산서", "category": "비용", "aliases": ["영업비용"]},
+    {"id": "sga", "name": "판매비와관리비", "statement": "손익계산서", "category": "비용", "aliases": ["판매비및관리비", "판관비"]}
+  ]
+}

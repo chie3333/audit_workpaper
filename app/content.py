@@ -39,13 +39,18 @@ def load_assertions(base: Path | None = None) -> dict:
     return _load(base / "assertions.json")
 
 
+def load_account_groups(base: Path | None = None) -> list[dict]:
+    base = base or CONTENT_DIR
+    return _load(base / "account_groups.json")["groups"]
+
+
 def list_bindings(base: Path | None = None) -> list[dict]:
     base = base or CONTENT_DIR
     out = []
     for p in sorted((base / "bindings").glob("*.json")):
         b = _load(p)
         out.append({"id": b["id"], "version": b["version"], "title": b["title"], "account": b["account"],
-                    "ledger_fs_lines": b.get("ledger_fs_lines", [])})
+                    "account_groups": b.get("account_groups", [])})
     return out
 
 
@@ -138,6 +143,14 @@ def resolve(binding_id: str, base: Path | None = None) -> dict:
     for role in required:
         if role not in b.get("documents", {}):
             errors.append(f"자료명 없음: {role}")
+    known = {g["id"] for g in load_account_groups(base)}
+    for gid in b.get("account_groups", []):
+        if gid not in known:
+            errors.append(f"공통 계정 분류에 없는 id '{gid}'")
+    for r in b.get("form_refs", []):
+        _check_refs("서식 위치", {"type": "근거 요약", "refs": [r]}, sources, errors)
+    if "basis" in b:
+        _check_refs("근거", {"type": "근거 요약", "refs": b["basis"].get("refs", [])}, sources, errors)
     comps = {comp["type"] for s in steps for comp in s["components"]}
     if "classify" in comps and not b.get("classify", {}).get("classes"):
         errors.append("분류 검토 절차에 분류 선택지(classify.classes)가 없음")
@@ -166,8 +179,9 @@ def resolve(binding_id: str, base: Path | None = None) -> dict:
         resolved["required_documents"] = list(required)
     if "classify" in b:
         resolved["classify"] = copy.deepcopy(b["classify"])
-    if "ledger_fs_lines" in b:
-        resolved["ledger_fs_lines"] = list(b["ledger_fs_lines"])
+    for key in ("account_groups", "form_refs", "form_note", "basis"):
+        if key in b:
+            resolved[key] = copy.deepcopy(b[key])
     resolved["content_key"] = f"{b['id']}@{b['version']}+{t['id']}@{t['version']}"
     resolved["hash"] = content_hash(resolved)
     return resolved

@@ -1,9 +1,13 @@
 {
   "id": "cash.classification_review",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "template": "classification_review",
   "account": "현금및현금성자산·장단기금융상품",
-  "ledger_fs_lines": ["현금및현금성자산", "단기금융상품", "장기금융상품"],
+  "account_groups": ["cash", "short_term_financial", "long_term_financial"],
+  "form_refs": [],
+  "form_note": "감사조서서식_4000에서 이 절차의 위치를 확인하지 못함",
+  "basis": {"refs": ["KSA2026:230.9", "KSA2026:500.7", "KSA2026:500.9"],
+            "note": "분류 기준(기업회계기준서 제1007호·제1001호) 문단은 미확인"},
   "title": "현금및현금성자산·장단기금융상품 분류 검토 (만기·사용제한)",
   "form_ref": null,
   "assertions": {

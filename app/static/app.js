@@ -362,7 +362,8 @@ const COMPONENTS = {
     if (!led) return put(box, box.firstChild, h("p", { class: "sub", style: "margin:0" }, "이 감사건에 정산표가 없습니다. 계정과목 참조 없이 작성합니다."));
     box.append(h("p", { class: "sub", style: "margin:0" }, "이 조서가 다루는 계정과목을 고르세요. 정산표 금액은 참조로만 보여주며 조서 입력값을 대신하지 않습니다."));
     const cur = new Set(S.data.linked_accounts);
-    const hint = new Set(S.wp.content.ledger_fs_lines || []);
+    const hint = new Set(S.wp.content.account_groups || []);
+    const groupOf = S.wp.account_group_of || {};
     const pick = (a) => {
       const cb = h("input", { type: "checkbox", value: a.code });
       cb.checked = cur.has(a.code);
@@ -372,7 +373,7 @@ const COMPONENTS = {
       }));
       return h("label", { class: cur.has(a.code) ? "on" : "" }, cb, `${a.code} ${a.name}`, h("small", {}, a.fs_line));
     };
-    const main = led.accounts.filter((a) => hint.has(a.fs_line)), rest = led.accounts.filter((a) => !hint.has(a.fs_line));
+    const main = led.accounts.filter((a) => hint.has(groupOf[a.code])), rest = led.accounts.filter((a) => !hint.has(groupOf[a.code]));
     box.append(h("div", { class: "assertions", role: "group", "aria-label": "이 절차 대상 계정과목" }, ...main.map(pick)));
     if (rest.length) box.append(h("details", {}, h("summary", { class: "sub" }, `다른 계정과목 ${rest.length}개`),
       h("div", { class: "assertions", style: "margin-top:6px" }, ...rest.map(pick))));
@@ -476,7 +477,7 @@ const COMPONENTS = {
       const rp = `${sp}.rows.#${r.id}`;
       tbody.append(h("tr", { dataset: { ref: `row:${r.id}` } },
         h("td", { class: "num" }, i + 1),
-        h("td", {}, input(`${rp}.item_id`, "text", { placeholder: "예: K01" })),
+        h("td", {}, input(`${rp}.item_id`, "text", { placeholder: "식별값" })),
         h("td", {}, input(`${rp}.name`)),
         ...extra.map((x) => h("td", {}, input(`${rp}.${x.key}`, x.type, { options: x.options }))),
         h("td", {}, input(`${rp}.schedule_amount`, "amount")),
@@ -532,7 +533,7 @@ const COMPONENTS = {
       const dated = r.maturity_type === "만기 있음";
       tbody.append(h("tr", { dataset: { ref: `crow:${r.id}` } },
         h("td", { class: "num" }, i + 1),
-        h("td", {}, input(`${rp}.item_id`, "text", { placeholder: "예: K02" })),
+        h("td", {}, input(`${rp}.item_id`, "text", { placeholder: "식별값" })),
         h("td", {}, input(`${rp}.name`)),
         ...extra.map((x) => h("td", {}, input(`${rp}.${x.key}`, x.type, { options: x.options }))),
         h("td", {}, input(`${rp}.amount`, "amount")),
@@ -923,8 +924,30 @@ async function ledgerView(eid, view, arg) {
         if (!Object.keys(body).length) { toast("연결할 표시 항목을 고르세요."); return; }
         await api("POST", `/api/engagements/${eid}/mapping`, body); toast("연결함"); route();
       } }, "연결 저장"))) : null;
+    const G = res.account_groups;
+    const gname = Object.fromEntries(G.map((g) => [g.id, g.name]));
+    const gsel = {};
+    const groupBox = C.fs_lines.length ? h("details", { class: "block", open: C.fs_lines.some((l) => !l.group) ? true : null },
+      h("summary", {}, h("b", {}, "표시 항목 공통 분류"), h("span", { class: "sub" },
+        ` — 조서 만들기에서 절차를 연결하는 기준입니다. 분류 없음 ${C.fs_lines.filter((l) => !l.group).length}개`)),
+      h("p", { class: "sub", style: "margin:4px 0" }, "이름(띄어쓰기·괄호 무시)과 재무제표·분류가 같으면 자동으로 연결됩니다. 다르면 직접 고르세요."),
+      h("div", { class: "tablewrap" }, h("table", { class: "ledger" },
+        h("thead", {}, h("tr", {}, ...["표시 항목", "재무제표 · 분류", "공통 분류", "정한 방식"].map((x) => h("th", {}, x)))),
+        h("tbody", {}, ...C.fs_lines.map((l) => {
+          const opts = G.filter((g) => g.statement === l.statement && g.category === l.category);
+          const el = h("select", {}, h("option", { value: "@auto" }, "자동"), h("option", { value: "" }, "분류 없음"),
+            ...opts.map((g) => h("option", { value: g.id }, g.name)));
+          el.value = l.group_source === "직접" ? (l.group || "") : "@auto";
+          gsel[l.name] = el;
+          return h("tr", {}, h("td", {}, l.name), h("td", { class: "sub" }, `${l.statement} · ${l.category}`), h("td", {}, el),
+            h("td", { class: l.group ? "sub" : "badc" }, l.group ? `${l.group_source}: ${gname[l.group]}` : "분류 없음"));
+        })))),
+      h("div", {}, h("button", { class: "btn small", type: "button", onclick: async () => {
+        const body = Object.fromEntries(Object.entries(gsel).map(([n, el]) => [n, el.value === "@auto" ? null : el.value]));
+        await api("POST", `/api/engagements/${eid}/groups`, body); toast("공통 분류 저장"); route();
+      } }, "공통 분류 저장"))) : null;
     const eqLines = L.fs.filter((r) => r.statement === "재무상태표" && r.category === "자본").map((r) => r.name);
-    const niSel = h("select", {}, h("option", { value: "" }, "자동(이익잉여금)"), ...eqLines.map((n) => h("option", { value: n }, n)));
+    const niSel = h("select", {}, h("option", { value: "" }, "자동(공통 분류가 이익잉여금인 항목)"), ...eqLines.map((n) => h("option", { value: n }, n)));
     niSel.value = L.net_income_line || "";
     niSel.addEventListener("change", async () => { await api("POST", `/api/engagements/${eid}/settings`, { net_income_line: niSel.value }); route(); });
     return h("section", { class: "paper step" },
@@ -934,6 +957,7 @@ async function ledgerView(eid, view, arg) {
         card("fs", "재무제표", "표시 항목별 전기·당기 금액. 소계·합계 행은 넣지 않습니다."),
         card("tb", "시산표", "계정과목별 전기말·당기 잔액과 표시 항목.")),
       mapBox,
+      groupBox,
       L.fs.length ? h("div", { class: "fields" }, fieldBox("당기순이익을 더해 보여줄 자본 항목", niSel,
         { help: "시산표의 이익잉여금은 마감 전 잔액이라 재무상태표에서는 당기순이익을 더합니다." })) : null,
       issuesBox(),
@@ -1134,10 +1158,15 @@ async function ledgerView(eid, view, arg) {
 }
 
 async function createWpDialog(eid, res, codes, label) {
-  const lines = new Set(codes.map((c) => res.computed.accounts[c]?.fs_line));
-  const fits = res.procedures.filter((p) => p.ledger_fs_lines.some((l) => lines.has(l)));
+  const gname = Object.fromEntries(res.account_groups.map((g) => [g.id, g.name]));
+  const groups = new Set(codes.map((c) => res.computed.accounts[c]?.group).filter(Boolean));
+  const fits = res.procedures.filter((p) => p.account_groups.some((g) => groups.has(g)));
   if (!fits.length) {
-    await modal("조서 만들기", [h("p", {}, `'${label}'에 맞는 절차 콘텐츠가 아직 없습니다. 지금은 현금및현금성자산·장단기금융상품 절차만 있습니다.`)], [["닫기", false]]);
+    const have = [...new Set(res.procedures.flatMap((p) => p.account_groups))].map((g) => gname[g] || g).join(", ");
+    await modal("조서 만들기", [
+      h("p", {}, groups.size ? `'${label}'의 공통 분류(${[...groups].map((g) => gname[g]).join(", ")})에 맞는 절차 콘텐츠가 아직 없습니다.` :
+        `'${label}'은 공통 분류가 정해지지 않아 절차를 연결할 수 없습니다. 자료 입력에서 공통 분류를 정하세요.`),
+      h("p", { class: "sub" }, `절차가 있는 공통 분류: ${have || "없음"}`)], [["닫기", false]]);
     return;
   }
   const sel = h("select", { id: "new-proc" }, ...fits.map((p) => h("option", { value: p.id }, `${p.title} (v${p.version})`)));

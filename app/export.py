@@ -52,6 +52,49 @@ def _amount_cell(raw):
     return v
 
 
+def _ref(content: dict, ref: str, detail: bool = False) -> str:
+    """출처 참조(예: 'KSA2026:330.20')를 사람이 읽는 이름으로. 출처 이름은 콘텐츠의 출처 목록에서 가져온다."""
+    sid, loc = ref.split(":", 1)
+    src = content["sources"].get(sid, {})
+    head = "감사기준서" if sid == "KSA2026" else "서식"
+    label = src.get("locations", {}).get(loc, "") if detail else ""
+    return f"{head} {loc}" + (f" ({label})" if label else "")
+
+
+def _form_text(content: dict) -> str:
+    """이 절차의 서식 위치. 계정 설정의 form_refs가 없으면(이전 콘텐츠 버전) form_ref 하나를 쓴다."""
+    if "form_refs" in content:
+        refs = content["form_refs"]
+        if not refs:
+            return "미확인 — " + (content.get("form_note") or "서식에서 이 절차의 위치를 확인하지 못함")
+        title = content["sources"].get(refs[0].split(":")[0], {}).get("title", "")
+        return f"{title} — " + " · ".join(_ref(content, r, detail=True) for r in refs)
+    return _ref(content, content["form_ref"], detail=True) if content.get("form_ref") else "미확인"
+
+
+def _assertion_source(content: dict) -> str:
+    a = content["assertions"]
+    if a.get("refs"):
+        return "[출처: " + ", ".join(_ref(content, r) for r in a["refs"]) + "]"
+    decided = (a.get("review") or {}).get("status") == "사용자 검토 완료"
+    return "[출처 미확인" + (" — 사용자가 정함" if decided else "") + "]"
+
+
+def _basis_text(content: dict) -> str:
+    """근거: 계정 설정의 basis(근거매핑에서 확인한 위치만)와 미확인 메모."""
+    b = content.get("basis")
+    if not b:
+        return _form_text(content) + "  (근거 목록 없음 — 이전 콘텐츠 버전)"
+    refs = b.get("refs", [])
+    text = " · ".join(_ref(content, r) for r in refs)
+    ksa = content["sources"].get("KSA2026", {})
+    if any(r.startswith("KSA2026:") for r in refs):
+        text += f" ({ksa.get('title', '')} {ksa.get('edition', '')})"
+    if b.get("note"):
+        text += (". " if text else "") + b["note"]
+    return text or "미확인"
+
+
 def _won(v) -> str:
     return "미입력" if v is None else f"{v:,}"
 
@@ -361,8 +404,7 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     sh.kv("통화·단위", f"{wp['currency']} · {wp['unit']}")
     sh.kv("계정", content["account"])
     sh.kv("절차", content["title"])
-    sh.kv("서식 위치", "미확인 — 감사조서서식_4000에서 이 절차의 위치를 확인하지 못함" if is_cls else
-          "감사조서서식_4000 A시트 A17–A19 (명세서 계산검증·보조부 대조, 스캔)")
+    sh.kv("서식 위치", _form_text(content))
     sh.kv("콘텐츠 버전", f"{content['content_key']} (해시 {content['hash'][:12]})")
     sh.kv("조서 저장본", f"리비전 {wp['rev']} · {wp['saved_at']} · {wp['saved_by']}" + ("  ※ 최신 저장본 아님" if wp["rev"] != wp["latest_rev"] else ""))
     sh.kv("편집 잠금", "잠김 (업무용 잠금이며 최종 감사파일 취합·법정 보존 기능이 아님)" if wp["locked"] else "잠기지 않음")
@@ -377,7 +419,7 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
     a_text = ", ".join(f"{names.get(c, c)}({c})" for c in applied) or "(없음)"
     a_text += "  — 콘텐츠 기본값과 같음" if sorted(applied) == sorted(default) else \
         f"  — 콘텐츠 기본값({', '.join(default)})에서 변경. 변경 이유: {data['assertions'].get('change_reason') or '(미기록)'}"
-    a_text += "  [출처 미확인 — 사용자가 정함]" if is_cls else "  [출처: 서식 A!J17]"
+    a_text += "  " + _assertion_source(content)
     sh.kv("적용 경영진 주장", a_text)
     sh.kv("관련 위험·계획 조서", fields.get("risk_ref"))
     sh.kv("중요성 참조", fields.get("materiality_ref"))
@@ -394,8 +436,7 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
             txt += (f"\n합계 — 전기말 {_won(link['prior'])} · 수정후 {_won(link['adjusted'])} · "
                     f"{_chg(link['change'], link['change_rate'], link['prior'])}  (참조값. 조서 입력값을 대신하지 않음)")
             sh.kv("정산표 계정과목", txt)
-    sh.kv("근거", "감사기준서 230 문단 9, 500 문단 7·9 (회계감사기준 2026년 7월 개정 전문). 분류 기준(기업회계기준서 제1007호·제1001호) 문단은 미확인" if is_cls else
-          "서식 A!A17–A18 · 감사기준서 330 문단 20·30, 500 문단 9 (회계감사기준 2026년 7월 개정 전문)")
+    sh.kv("근거", _basis_text(content))
 
     # 3. 사용 자료
     sh.section("3. 사용 자료")
@@ -412,7 +453,7 @@ def build(wp: dict, computed: dict | None = None) -> tuple[bytes, dict]:
             conf = f"확인함\n{m.get('confirmed_by') or '?'} · {m.get('confirmed_date') or '?'}\n범위: {m.get('confirmed_scope') or '(미기록)'}"
         else:
             conf = "등록만 됨" if m.get("receipt") == "입수" else "—"
-        r = sh.row(["", DOC_LABEL.get(m.get("role"), m.get("role")), m.get("name") or "",
+        r = sh.row(["", DOC_LABEL.get(m.get("role")) or content["documents"].get(m.get("role"), m.get("role")), m.get("name") or "",
                     f"{m.get('version_label') or ''}\n{kind}", m.get("provider") or "", rec, m.get("as_of_date") or "",
                     m.get("location") or "", conf, m.get("remaining_work") or m.get("note") or ""], height_cols={3, 4, 8, 9, 10})
         if m.get("receipt") != "입수":

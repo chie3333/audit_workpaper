@@ -1,9 +1,11 @@
 {
   "id": "cash.schedule_recon",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "template": "schedule_recon",
   "account": "현금및현금성자산·장단기금융상품",
-  "ledger_fs_lines": ["현금및현금성자산", "단기금융상품", "장기금융상품"],
+  "account_groups": ["cash", "short_term_financial", "long_term_financial"],
+  "form_refs": ["FORM4000:A!A17", "FORM4000:A!A18", "FORM4000:A!A19"],
+  "basis": {"refs": ["FORM4000:A!A17", "FORM4000:A!A18", "KSA2026:330.20", "KSA2026:330.30", "KSA2026:500.9"], "note": ""},
   "title": "현금및현금성자산·장단기금융상품 명세서 계산검증 및 보조부 대사",
   "form_ref": "FORM4000:A!A17",
   "assertions": {

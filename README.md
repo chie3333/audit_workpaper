@@ -39,6 +39,8 @@ uvicorn app.main:app --reload       # http://localhost:8000
   분류별 합계(회사 vs 감사인 판단)만 계산하고 분류를 제안하지 않음. 분류가 다른 행은 재분류 금액으로 잡혀 발견 사항 기록을 요구
 - 회사 → 보고기간 → 자료 입력: 재무제표·시산표 양식을 내려받아 채워 올림(형식 오류가 있으면 저장하지 않고 행 번호와 함께 알림)
   - 시산표의 표시 항목이 재무제표에 없으면 앱에서 연결. 재무제표 금액과 시산표 합계가 다르면 '확인할 것'에 표시
+  - 표시 항목마다 공통 계정 분류(`content/account_groups.json`)를 자동 연결(띄어쓰기·괄호 무시, 별칭 포함)하고 앱에서 고칠 수 있음.
+    조서 만들기는 이 분류로 절차를 찾음(표시 항목 이름이 회사마다 달라도 됨)
   - 감사인 수정분개는 앱에서 입력. 정산표: 당기(회사) + 수정분개 = 수정후
 - 재무제표 → 정산표 → 계정원장 → 분개장 탐색, 표시 항목·계정과목에서 '조서 만들기'(그 계정이 선택된 조서가 열림)
   - 증감액(수정후 − 전기말)과 증감률(증감액 ÷ |전기말|)을 색으로 강조. 증가 ▲(붉은색), 감소 ▼(파란색), 전기 0원이면 '신규'
@@ -76,18 +78,20 @@ app/
   static/      화면 (바닐라 JS)
 content/
   sources.json                 출처 목록과 확인된 위치(근거매핑과 같아야 함)
+  account_groups.json          공통 계정 분류(표시 항목 → 분류 → 절차 연결)
   assertions.json              경영진 주장 (서식 A!A7:H10)
   templates/schedule_recon.json         공통 절차 템플릿: 명세서 대사
   templates/classification_review.json  공통 절차 템플릿: 분류 검토
   bindings/cash.schedule_recon.json         현금 계정 설정: 명세서 대사
   bindings/cash.classification_review.json  현금 계정 설정: 분류 검토
 samples/sources/  가상 회사 자료 엑셀 (정상·차이·자료부족, scripts/make_sample_sources.py로 생성)
-tests/        테스트 65개
+tests/        테스트 72개
 ```
 
 ### 다른 계정 추가
 
-`content/bindings/`에 계정 설정 JSON을 하나 추가한다(자료명, 항목 열, 경영진 주장과 출처, 계정별 안내).
+`content/bindings/`에 계정 설정 JSON을 하나 추가한다(자료명, 항목 열, 경영진 주장과 출처, 계정별 안내,
+연결할 공통 계정 분류 `account_groups`, 엑셀에 쓸 서식 위치 `form_refs`·근거 `basis`).
 같은 템플릿으로 되면 코드 수정이 없다. 새 계산·점검이 필요하면 `engine.py`에 규칙을 추가하고 템플릿에서 이름으로 부른다.
 콘텐츠 내용을 바꾸면 `version`을 올린다.
 
