@@ -234,3 +234,12 @@ table.ledger td.strong { font-weight: 700; }
 table.ledger input, table.ledger select { padding: 4px 6px; font-size: 13px; }
 .step > *, .ledger-page > *, .block > *, .cards > *, .card > *, .editor > * { min-width: 0; }
 input[type=file] { max-width: 100%; }
+
+/* 조서 보드 (칸반, 보기 전용) */
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 6px; align-items: start; }
+.kcol { background: var(--bg); border-radius: 8px; padding: 8px; display: grid; gap: 8px; align-content: start; min-height: 120px; }
+.khead { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 2px 4px; }
+.kcard { background: var(--paper); border: 1px solid var(--line); border-radius: 7px; padding: 10px; display: grid; gap: 6px; box-shadow: var(--shadow); }
+.kcard.attn { border-left: 3px solid var(--mark); }
+.kcard .ktitle { font-weight: 600; text-decoration: none; color: var(--ink); }
+.kcard .ktitle:hover { text-decoration: underline; }

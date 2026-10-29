@@ -181,6 +181,42 @@ def ledger_settings(eid: int, body: dict = Body(...)):
     return ledger(eid)
 
 
+@app.get("/api/engagements/{eid}/board")
+def board(eid: int):
+    """보고기간의 조서를 칸반 보드용 카드로. 보기 전용 — 상태는 조서 안에서 바꾼다. 상태·남은 작업은 engine 결과 그대로."""
+    try:
+        eng = records.engagement(eid)
+    except Exception as e:
+        _err(e)
+    led = records.load_ledger(eid) or {}
+    names = {a["code"]: a["name"] for a in led.get("accounts", [])}
+    cards, findings = [], []
+    for w in eng["workpapers"]:
+        wp = records.load_workpaper(w["id"])
+        c = engine.compute(wp["content"], wp["data"], wp["ledger"])
+        f = wp["data"]["fields"]
+        st = c["status"]
+        warns = [i for i in c["open_items"] if i["level"] == "warn"]
+        cards.append({
+            "id": wp["id"], "wp_no": f.get("wp_no") or "", "title": wp["title"], "locked": wp["locked"],
+            "procedure": st["procedure"], "review": st["review"], "procedure_ready": st["procedure_ready"],
+            "blocking": st["blocking_count"], "warnings": len(warns),
+            "findings": st["findings"], "findings_unresolved": st["findings_unresolved"],
+            "performer": f.get("performer") or "", "reviewer": f.get("reviewer") or "",
+            "accounts": [f"{code} {names.get(code, '')}".strip() for code in wp["data"].get("linked_accounts", [])],
+            "rev": wp["rev"], "saved_at": wp["saved_at"],
+        })
+        for x in wp["data"].get("findings", []):
+            findings.append({"id": x["id"], "wp_id": wp["id"], "wp_no": f.get("wp_no") or "", "wp_title": wp["title"],
+                             "title": x.get("title") or "(제목 없음)", "status": x.get("status") or "미해결",
+                             "amount": x.get("amount"), "explanation_type": x.get("explanation_type") or "없음",
+                             "link_state": c["ui"]["findings"].get(x["id"], {}).get("link_state")})
+    return {"engagement": eng, "cards": cards, "findings": findings,
+            "columns": {"procedure": ["미착수", "진행 중", "수행 완료", "해당 없음", "대체절차 수행"],
+                        "review": ["미검토", "검토 중", "의견 처리 중", "검토 완료"],
+                        "findings": engine.FINDING_STATUS}}
+
+
 @app.get("/api/engagements/{eid}/ledger/accounts/{code}")
 def account_ledger(eid: int, code: str):
     led = records.load_ledger(eid)

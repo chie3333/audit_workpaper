@@ -832,7 +832,7 @@ async function ledgerView(eid, view, arg) {
   put($("#chips"), E.is_sample ? h("span", { class: "chip sample" }, "가상 데이터") : null,
     h("span", { class: "chip " + (C.ready ? "ok" : "warn") }, C.ready ? "정산표 준비됨" : "자료 입력 필요"));
   put($("#actions"), h("a", { class: "btn", href: `${base}-aje` }, `수정분개 ${L.adjustments?.length || 0}`),
-    h("a", { class: "btn", href: `${base}-wps` }, `조서 ${E.workpapers.length}`));
+    h("a", { class: "btn", href: `${base}-wps` }, `조서 보드 ${E.workpapers.length}`));
   // 자료가 다 들어오기 전에는 자료 입력부터
   if (!C.ready && !["input", "aje", "wps"].includes(view)) view = "input";
   const byCode = Object.fromEntries(L.accounts.map((a) => [a.code, a]));
@@ -844,7 +844,7 @@ async function ledgerView(eid, view, arg) {
   else if (view === "tb") body = tbView(arg);
   else if (view === "acct") body = await acctView(arg);
   else if (view === "aje") body = ajeView();
-  else if (view === "wps") body = wpsView();
+  else if (view === "wps") body = await wpsView(arg);
   else body = jeView(arg);
   const stepOn = view === "aje" ? "tb" : view;
   put($("#app"), h("div", { class: "ledger-page" },
@@ -1145,15 +1145,42 @@ async function ledgerView(eid, view, arg) {
         h("tbody", {}, ...rows))));
   }
 
-  function wpsView() {
+  async function wpsView(tab) {
+    tab = ["procedure", "review", "findings"].includes(tab) ? tab : "procedure";
+    const B = await api("GET", `/api/engagements/${eid}/board`);
+    const tabs = [["procedure", "조서 수행"], ["review", "검토"], ["findings", "발견 사항"]];
+    const chip = (cls, text, title) => h("span", { class: "chip " + cls, title }, text);
+    const wpCard = (c) => h("div", { class: "kcard" + (c.blocking ? " attn" : "") },
+      h("a", { href: `#wp-${c.id}`, class: "ktitle" }, `${c.wp_no || "(조서번호 없음)"} ${c.title}`),
+      h("div", { class: "chips" },
+        tab === "procedure" ? chip("", `검토: ${c.review}`) : chip("", `수행: ${c.procedure}`),
+        c.blocking ? chip("mark", `남은 작업 ${c.blocking}`) : chip("ok", "남은 작업 없음"),
+        c.findings_unresolved ? chip("mark", `미처리 발견 ${c.findings_unresolved}`) : null,
+        c.procedure === "수행 완료" && c.blocking ? chip("warn", "완료 표시인데 남은 작업 있음") : null,
+        c.review === "검토 완료" && !["수행 완료", "해당 없음", "대체절차 수행"].includes(c.procedure) ? chip("warn", "검토 완료인데 수행 미완료") : null,
+        c.locked ? chip("warn", "잠김", "업무용 잠금") : null),
+      c.accounts.length ? h("div", { class: "sub" }, c.accounts.join(", ")) : h("div", { class: "sub" }, "계정과목 미선택"),
+      h("div", { class: "sub" }, [c.performer && `수행 ${c.performer}`, c.reviewer && `검토 ${c.reviewer}`, `리비전 ${c.rev} · ${c.saved_at.replace("T", " ").slice(0, 16)}`].filter(Boolean).join(" · ")));
+    const fCard = (f) => h("div", { class: "kcard" + (f.status !== "처리 완료" ? " attn" : "") },
+      h("a", { href: `#wp-${f.wp_id}`, class: "ktitle" }, f.title),
+      h("div", { class: "chips" },
+        f.amount !== null && f.amount !== undefined && f.amount !== "" ? chip("mark", `${fmt(f.amount)}원`) : null,
+        f.explanation_type === "담당자 설명만" ? chip("warn", "담당자 설명만") : f.explanation_type === "자료로 재확인" ? chip("ok", "자료로 재확인") : null,
+        f.link_state === "zero_or_blank" ? chip("", "연결된 차이가 현재 0 또는 미입력") : null),
+      h("div", { class: "sub" }, `${f.wp_no || "조서"} ${f.wp_title}`));
+    const cols = B.columns[tab];
+    const items = tab === "findings" ? B.findings : B.cards;
+    const key = tab === "findings" ? "status" : tab;
     return h("section", { class: "paper step" },
-      h("h1", {}, "조서"),
-      h("p", { class: "sub", style: "margin:0" }, "조서는 재무제표나 정산표의 '조서 만들기'에서 계정과목을 골라 만듭니다."),
-      E.workpapers.length ? h("div", { class: "eng" }, ...E.workpapers.map((w) => h("div", { class: "wpl" },
-        h("a", { href: `#wp-${w.id}` }, `${w.wp_no || "(조서번호 없음)"} ${w.title}`),
-        h("span", { class: "sub" }, w.linked_accounts.length ? w.linked_accounts.map((c) => `${c} ${byCode[c]?.name || "(시산표에 없음)"}`).join(", ") : "계정과목 미선택")))) :
-        h("p", {}, "아직 조서가 없습니다."),
-      C.ready ? h("div", {}, h("a", { class: "btn", href: `${base}-fs` }, "재무제표에서 만들기")) : null);
+      h("div", { class: "block-head" }, h("h1", {}, "조서 보드"),
+        h("div", { class: "settabs" }, ...tabs.map(([k, label]) => h("a", { class: "btn small" + (k === tab ? " primary" : ""), href: `${base}-wps-${k}` }, label)))),
+      h("p", { class: "sub", style: "margin:0" }, "보기 전용입니다. 카드를 누르면 조서가 열리고, 상태는 조서 안에서 바꿉니다. 수행·발견 사항·검토 상태는 서로 자동으로 바뀌지 않습니다."),
+      items.length ? h("div", { class: "board" }, ...cols.map((col) => {
+        const list = items.filter((x) => (x[key] || cols[0]) === col);
+        return h("div", { class: "kcol" }, h("div", { class: "khead" }, h("b", {}, col), h("span", { class: "count" + (list.length ? "" : " zero") }, list.length)),
+          ...list.map(tab === "findings" ? fCard : wpCard));
+      })) : h("p", {}, tab === "findings" ? "기록된 발견 사항이 없습니다." : "아직 조서가 없습니다. 재무제표나 정산표의 '조서 만들기'로 만드세요."),
+      C.ready && tab !== "findings" ? h("div", {}, h("a", { class: "btn", href: `${base}-fs` }, "재무제표에서 조서 만들기")) : null);
   }
 }
 
