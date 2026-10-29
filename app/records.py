@@ -137,6 +137,15 @@ def save_ledger(engagement_id: int, ledger: dict, source: str):
                     (engagement_id, source, json.dumps(ledger, ensure_ascii=False), now()))
 
 
+def update_ledger(engagement_id: int, fn, source: str = "업로드") -> dict:
+    """감사건의 원장 자료를 읽어 fn(ledger)로 고친 뒤 저장한다. 없으면 빈 자료에서 시작한다."""
+    cur = load_ledger(engagement_id) or {"fs": [], "accounts": [], "adjustments": [], "journal": [], "sources": {}}
+    cur = {k: v for k, v in cur.items() if not k.startswith("_")}
+    fn(cur)
+    save_ledger(engagement_id, cur, source)
+    return cur
+
+
 def load_ledger(engagement_id: int) -> dict | None:
     with connect() as con:
         row = con.execute("SELECT * FROM ledgers WHERE engagement_id=?", (engagement_id,)).fetchone()
@@ -158,7 +167,8 @@ def engagement(engagement_id: int) -> dict:
             d = json.loads(w["data_json"])
             wps.append({"id": w["id"], "title": w["title"], "wp_no": d.get("fields", {}).get("wp_no", ""),
                         "linked_accounts": d.get("linked_accounts", [])})
-        return {"id": e["id"], "company": e["company"], "is_sample": bool(e["is_sample"]), "period_end": e["period_end"],
+        return {"id": e["id"], "company": e["company"], "company_id": e["company_id"], "is_sample": bool(e["is_sample"]),
+                "period_end": e["period_end"],
                 "currency": e["currency"], "unit": e["unit"], "workpapers": wps}
 
 
@@ -200,7 +210,7 @@ def default_data(resolved: dict, period_end: str) -> dict:
     return data
 
 
-def create_workpaper(engagement_id: int, binding_id: str, by: str = DEFAULT_USER) -> int:
+def create_workpaper(engagement_id: int, binding_id: str, by: str = DEFAULT_USER, linked_accounts: list[str] | None = None) -> int:
     resolved = content_mod.resolve(binding_id)
     with connect() as con:
         eng = con.execute("SELECT * FROM engagements WHERE id=?", (engagement_id,)).fetchone()
@@ -210,8 +220,11 @@ def create_workpaper(engagement_id: int, binding_id: str, by: str = DEFAULT_USER
         cur = con.execute("INSERT INTO workpapers(engagement_id, snapshot_id, title, created_at) VALUES (?,?,?,?)",
                           (engagement_id, sid, resolved["title"], now()))
         wid = cur.lastrowid
+        data = default_data(resolved, eng["period_end"])
+        if linked_accounts and "linked_accounts" in data:
+            data["linked_accounts"] = list(linked_accounts)
         con.execute("INSERT INTO revisions(workpaper_id, rev_no, saved_at, saved_by, note, data_json) VALUES (?,?,?,?,?,?)",
-                    (wid, 1, now(), by, "조서 생성", json.dumps(default_data(resolved, eng["period_end"]), ensure_ascii=False)))
+                    (wid, 1, now(), by, "조서 생성", json.dumps(data, ensure_ascii=False)))
         return wid
 
 
@@ -273,6 +286,13 @@ def revisions(wid: int) -> dict:
         return {"revisions": revs, "lock_events": locks}
 
 
+def company(company_id: int) -> dict:
+    for c in tree():
+        if c["id"] == company_id:
+            return c
+    raise RecordError("회사 없음")
+
+
 def tree() -> list[dict]:
     with connect() as con:
         out = []
@@ -285,7 +305,9 @@ def tree() -> list[dict]:
                               (SELECT saved_at FROM revisions r WHERE r.workpaper_id=w.id ORDER BY rev_no DESC LIMIT 1) AS saved_at
                        FROM workpapers w JOIN content_snapshots s ON s.id=w.snapshot_id WHERE w.engagement_id=? ORDER BY w.id""",
                     (e["id"],))]
-                has_ledger = con.execute("SELECT 1 FROM ledgers WHERE engagement_id=?", (e["id"],)).fetchone() is not None
+                led = con.execute("SELECT data_json FROM ledgers WHERE engagement_id=?", (e["id"],)).fetchone()
+                led = json.loads(led["data_json"]) if led else {}
+                has_ledger = bool(led.get("fs") and led.get("accounts"))
                 engs.append({"id": e["id"], "period_end": e["period_end"], "currency": e["currency"], "unit": e["unit"],
                              "has_ledger": has_ledger, "workpapers": wps})
             out.append({"id": c["id"], "name": c["name"], "is_sample": bool(c["is_sample"]), "engagements": engs})

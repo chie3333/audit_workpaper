@@ -63,6 +63,6 @@ def test_files_follow_receipt_status(sources, resolved, company, builder):
 
 def test_every_file_marked_virtual(sources):
     for path in sources.rglob("*.xlsx"):
-        ws = load_workbook(path).active
-        texts = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+        wb = load_workbook(path)
+        texts = [c.value for ws in wb for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
         assert mss.NOTICE in texts, path.name

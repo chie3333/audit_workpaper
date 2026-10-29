@@ -228,3 +228,7 @@ table.ledger tr.first td { border-top: 1px solid var(--line-strong); }
 table.ledger td.okc { color: var(--ok); font-size: 12px; }
 table.ledger td.badc { color: var(--mark); font-size: 12px; font-weight: 600; }
 table.ledger td.nowrap { white-space: nowrap; }
+.flowstep.off { opacity: .5; }
+.cards.two { grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); }
+table.ledger td.strong { font-weight: 700; }
+table.ledger input, table.ledger select { padding: 4px 6px; font-size: 13px; }

@@ -16,6 +16,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from app import imports, samples  # noqa: E402
 DEFAULT_OUT = ROOT / "samples" / "sources"
 
 PERIOD = "2025-12-31"
@@ -148,6 +150,11 @@ def build(out: Path = DEFAULT_OUT) -> list[Path]:
     # 차이 회사의 분류 검토 조서(A-210)가 쓰는 K02 예금증서
     deposit_certificate(d / "예금증서_K02.xlsx", co, *K02, date(2025, 11, 15), date(2026, 5, 15), 8_000_000,
                         "가능 (약정이율보다 낮은 중도해지이율 적용)", "없음")
+
+    # 차이 회사의 감사건 자료 입력용: 회사 재무제표·시산표(감사 전), 앱 업로드 양식 그대로
+    led = samples.ledger()
+    (d / "재무제표.xlsx").write_bytes(imports.write_fs(led["fs"], notice=NOTICE))
+    (d / "시산표.xlsx").write_bytes(imports.write_tb(led["accounts"], notice=NOTICE))
 
     # 자료 부족: 원본·수정본 명세서, K01 보조원장만 입수. K02 보조원장은 미입수라 만들지 않는다.
     d, co = folder("자료부족"), CASES["자료부족"]

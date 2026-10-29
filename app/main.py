@@ -4,11 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import content, engine, export, records
+from . import content, engine, export, imports, records
 
 STATIC = Path(__file__).resolve().parent / "static"
 app = FastAPI(title="실증절차 조서 작성")
@@ -54,6 +54,14 @@ def tree():
     return records.tree()
 
 
+@app.get("/api/companies/{cid}")
+def company(cid: int):
+    try:
+        return records.company(cid)
+    except Exception as e:
+        _err(e)
+
+
 @app.post("/api/companies")
 def create_company(body: dict = Body(...)):
     try:
@@ -79,16 +87,85 @@ def ledger(eid: int):
         led = records.load_ledger(eid)
     except Exception as e:
         _err(e)
-    if not led:
-        return {"engagement": eng, "ledger": None, "computed": None}
-    return {"engagement": eng, "ledger": led, "computed": engine.compute_ledger(led)}
+    led = led or {"fs": [], "accounts": [], "adjustments": [], "journal": [], "sources": {}}
+    return {"engagement": eng, "ledger": led, "computed": engine.compute_ledger(led),
+            "procedures": content.list_bindings()}
+
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@app.get("/api/templates/{kind}.xlsx")
+def template(kind: str):
+    """재무제표·시산표 양식 (빈 양식)."""
+    if kind not in ("fs", "tb"):
+        raise HTTPException(404, "양식 없음")
+    data = imports.write_fs() if kind == "fs" else imports.write_tb()
+    name = "재무제표_양식.xlsx" if kind == "fs" else "시산표_양식.xlsx"
+    return Response(data, media_type=XLSX, headers={"Content-Disposition": f"attachment; filename=\"{kind}.xlsx\"; filename*=UTF-8''{quote(name)}"})
+
+
+@app.post("/api/engagements/{eid}/upload/{kind}")
+async def upload(eid: int, kind: str, request: Request):
+    """양식 엑셀 업로드. 본문은 파일 그대로(xlsx 바이트). 오류가 있으면 저장하지 않는다."""
+    if kind not in ("fs", "tb"):
+        raise HTTPException(404, "알 수 없는 자료")
+    body = await request.body()
+    filename = request.headers.get("x-filename", "")
+    try:
+        records.engagement(eid)
+        parsed = imports.parse_fs(body) if kind == "fs" else imports.parse_tb(body)
+    except imports.ImportError_ as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        _err(e)
+    if parsed["errors"]:
+        raise HTTPException(422, {"message": "양식 오류 — 저장하지 않음", "errors": parsed["errors"]})
+
+    def apply(led):
+        if kind == "fs":
+            led["fs"] = parsed["rows"]
+        else:
+            led["accounts"] = parsed["accounts"]
+        led.setdefault("sources", {})[kind] = {"filename": filename, "uploaded_at": records.now(),
+                                               "rows": len(parsed.get("rows") or parsed.get("accounts"))}
+    records.update_ledger(eid, apply)
+    return ledger(eid)
+
+
+@app.post("/api/engagements/{eid}/mapping")
+def mapping(eid: int, body: dict = Body(...)):
+    """계정과목 → 표시 항목 연결을 고친다. body: {"계정코드": "표시 항목"}"""
+    def apply(led):
+        for a in led.get("accounts", []):
+            if a["code"] in body:
+                a["fs_line"] = body[a["code"]] or ""
+    records.update_ledger(eid, apply)
+    return ledger(eid)
+
+
+@app.post("/api/engagements/{eid}/adjustments")
+def adjustments(eid: int, body: dict = Body(...)):
+    """감사인 수정분개 전체를 저장한다. 차대 불일치 등은 계산 결과의 확인할 것에 표시된다."""
+    items = body.get("adjustments", [])
+    for a in items:
+        if not a.get("id") or not isinstance(a.get("lines"), list):
+            raise HTTPException(400, "수정분개 형식 오류")
+    records.update_ledger(eid, lambda led: led.__setitem__("adjustments", items))
+    return ledger(eid)
+
+
+@app.post("/api/engagements/{eid}/settings")
+def ledger_settings(eid: int, body: dict = Body(...)):
+    records.update_ledger(eid, lambda led: led.__setitem__("net_income_line", body.get("net_income_line") or None))
+    return ledger(eid)
 
 
 @app.get("/api/engagements/{eid}/ledger/accounts/{code}")
 def account_ledger(eid: int, code: str):
     led = records.load_ledger(eid)
-    if not led:
-        raise HTTPException(404, "이 감사건에 정산표가 없음")
+    if not led or not led.get("accounts"):
+        raise HTTPException(404, "이 감사건에 시산표가 없음")
     try:
         return engine.account_ledger(led, code)
     except KeyError:
@@ -98,7 +175,8 @@ def account_ledger(eid: int, code: str):
 @app.post("/api/workpapers")
 def create_workpaper(body: dict = Body(...)):
     try:
-        return {"id": records.create_workpaper(int(body["engagement_id"]), body["procedure_id"])}
+        return {"id": records.create_workpaper(int(body["engagement_id"]), body["procedure_id"],
+                                               linked_accounts=body.get("linked_accounts"))}
     except Exception as e:
         _err(e)
 

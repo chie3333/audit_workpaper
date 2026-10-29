@@ -44,7 +44,8 @@ def list_bindings(base: Path | None = None) -> list[dict]:
     out = []
     for p in sorted((base / "bindings").glob("*.json")):
         b = _load(p)
-        out.append({"id": b["id"], "version": b["version"], "title": b["title"], "account": b["account"]})
+        out.append({"id": b["id"], "version": b["version"], "title": b["title"], "account": b["account"],
+                    "ledger_fs_lines": b.get("ledger_fs_lines", [])})
     return out
 
 

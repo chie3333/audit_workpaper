@@ -92,9 +92,11 @@ route();
 
 function route() {
   const m = location.hash.match(/^#wp-(\d+)(?:-r(\d+))?$/);
-  const l = location.hash.match(/^#eng-(\d+)(?:-(tb|acct|je)(?:-(.+))?)?$/);
+  const l = location.hash.match(/^#eng-(\d+)(?:-(input|fs|tb|aje|acct|je|wps)(?:-(.+))?)?$/);
+  const co = location.hash.match(/^#co-(\d+)$/);
   if (m) openWp(+m[1], m[2] ? +m[2] : null).catch(showError);
   else if (l) ledgerView(+l[1], l[2] || "fs", l[3] ? decodeURIComponent(l[3]) : null).catch(showError);
+  else if (co) companyView(+co[1]).catch(showError);
   else home().catch(showError);
 }
 
@@ -182,47 +184,49 @@ function fieldBox(label, el, { req, help, wide, vis, ui, ref } = {}) {
 // ------------------------------------------------------------------ 홈
 async function home() {
   S.wp = null; S.dirty = false; renderTop();
-  const [tree, procs] = await Promise.all([api("GET", "/api/tree"), api("GET", "/api/procedures")]);
-  const list = h("section", { class: "paper" }, h("h1", {}, "조서"),
-    h("p", { class: "intro" }, "회사·보고기간별로 조서가 따로 저장됩니다. 조서를 열면 단계별 안내를 보면서 입력하고, 저장한 뒤 엑셀로 내려받을 수 있습니다."));
-  if (!tree.length) list.append(h("p", { class: "sub" }, "아직 조서가 없습니다. 오른쪽에서 새 조서를 만드세요. 가상 사례는 scripts/seed_samples.py로 넣을 수 있습니다."));
+  const tree = await api("GET", "/api/tree");
+  const list = h("section", { class: "paper" }, h("h1", {}, "회사"),
+    h("p", { class: "intro" }, "회사를 고르고 보고기간을 고르면 재무제표·시산표 입력부터 시작합니다. 조서는 재무제표·정산표에서 계정과목을 골라 만듭니다."));
+  if (!tree.length) list.append(h("p", { class: "sub" }, "아직 회사가 없습니다. 오른쪽에서 추가하세요. 가상 사례는 scripts/seed_samples.py로 넣을 수 있습니다."));
   for (const c of tree) {
-    const co = h("div", { class: "co" }, h("h3", {}, c.name, c.is_sample ? h("span", { class: "chip sample" }, "가상 데이터") : null));
-    for (const e of c.engagements) {
-      const eng = h("div", { class: "eng" }, h("div", { class: "sub" }, `보고기간 종료일 ${e.period_end} · ${e.currency} · ${e.unit}`,
-        e.has_ledger ? h("a", { class: "btn small", href: `#eng-${e.id}`, style: "margin-left:8px" }, "재무제표 → 정산표 → 원장 → 분개장") : null));
-      for (const w of e.workpapers) {
-        eng.append(h("div", { class: "wpl" },
-          h("a", { href: `#wp-${w.id}` }, w.title),
-          h("span", { class: "sub" }, `리비전 ${w.rev} · ${w.saved_at?.replace("T", " ")}${w.locked ? " · 잠김" : ""}`)));
-      }
-      if (!e.workpapers.length) eng.append(h("div", { class: "sub" }, "조서 없음"));
-      co.append(eng);
-    }
-    list.append(co);
+    list.append(h("div", { class: "co" },
+      h("h3", {}, h("a", { href: `#co-${c.id}` }, c.name), c.is_sample ? h("span", { class: "chip sample" }, "가상 데이터") : null),
+      h("div", { class: "eng" }, ...(c.engagements.length ? c.engagements.map((e) => h("div", { class: "wpl" },
+        h("a", { href: `#eng-${e.id}` }, `보고기간 종료일 ${e.period_end}`),
+        h("span", { class: "sub" }, `${e.has_ledger ? "정산표 준비됨" : "자료 입력 필요"} · 조서 ${e.workpapers.length}개`))) :
+        [h("div", { class: "sub" }, "보고기간 없음")]))));
   }
-  const coSel = h("select", { id: "new-co" }, h("option", { value: "" }, "새 회사 입력"), ...tree.map((c) => h("option", { value: c.id }, c.name)));
-  const coName = h("input", { type: "text", id: "new-co-name", placeholder: "회사명" });
-  const period = h("input", { type: "date", id: "new-period" });
-  const proc = h("select", { id: "new-proc" }, ...procs.map((p) => h("option", { value: p.id }, `${p.title} (v${p.version})`)));
+  const name = h("input", { type: "text", id: "new-co-name", placeholder: "회사명" });
   const err = h("div", { class: "err" });
-  coSel.addEventListener("change", () => { coName.parentElement.hidden = !!coSel.value; });
-  const form = h("section", { class: "paper" }, h("h1", {}, "새 조서"),
-    fieldBox("회사", coSel), fieldBox("새 회사명", coName), fieldBox("보고기간 종료일", period, { req: true }),
-    fieldBox("실증절차", proc, { req: true }), err,
+  const form = h("section", { class: "paper" }, h("h1", {}, "새 회사"), fieldBox("회사명", name, { req: true }), err,
     h("div", {}, h("button", { class: "btn primary", type: "button", onclick: async () => {
       err.textContent = "";
-      try {
-        let cid = coSel.value;
-        if (!cid) cid = (await api("POST", "/api/companies", { name: coName.value })).id;
-        const company = tree.find((c) => String(c.id) === String(cid));
-        let eid = company?.engagements.find((e) => e.period_end === period.value)?.id;
-        if (!eid) eid = (await api("POST", "/api/engagements", { company_id: +cid, period_end: period.value })).id;
-        const { id } = await api("POST", "/api/workpapers", { engagement_id: eid, procedure_id: proc.value });
-        location.hash = `#wp-${id}`;
-      } catch (e) { err.textContent = e.message; }
-    } }, "조서 만들기")));
+      try { const { id } = await api("POST", "/api/companies", { name: name.value }); location.hash = `#co-${id}`; }
+      catch (e) { err.textContent = e.message; }
+    } }, "회사 추가")));
   put($("#app"), h("div", { class: "home" }, list, form));
+}
+
+async function companyView(cid) {
+  S.wp = null; S.dirty = false; renderTop();
+  const c = await api("GET", `/api/companies/${cid}`);
+  put($("#crumb"), h("b", {}, c.name));
+  put($("#chips"), c.is_sample ? h("span", { class: "chip sample" }, "가상 데이터") : null);
+  const period = h("input", { type: "date", id: "new-period" });
+  const err = h("div", { class: "err" });
+  put($("#app"), h("div", { class: "home" },
+    h("section", { class: "paper" }, h("h1", {}, `${c.name} — 보고기간`),
+      c.engagements.length ? h("div", { class: "eng" }, ...c.engagements.map((e) => h("div", { class: "wpl" },
+        h("a", { href: `#eng-${e.id}` }, `보고기간 종료일 ${e.period_end}`),
+        h("span", { class: "sub" }, `${e.has_ledger ? "정산표 준비됨" : "자료 입력 필요"} · 조서 ${e.workpapers.length}개`)))) :
+        h("p", { class: "sub" }, "보고기간이 없습니다. 오른쪽에서 추가하세요."),
+      h("a", { href: "#" }, "← 회사 목록")),
+    h("section", { class: "paper" }, h("h1", {}, "새 보고기간"), fieldBox("보고기간 종료일", period, { req: true }), err,
+      h("div", {}, h("button", { class: "btn primary", type: "button", onclick: async () => {
+        err.textContent = "";
+        try { const { id } = await api("POST", "/api/engagements", { company_id: cid, period_end: period.value }); location.hash = `#eng-${id}-input`; }
+        catch (e) { err.textContent = e.message; }
+      } }, "보고기간 추가 → 자료 입력")))));
 }
 
 // ------------------------------------------------------------------ 조서 열기
@@ -249,7 +253,8 @@ function renderTop() {
   const crumb = $("#crumb"), chips = $("#chips"), actions = $("#actions");
   if (!S.wp) { put(crumb); put(chips); put(actions); return; }
   const f = S.data.fields, st = S.computed.status;
-  put(crumb, h("b", {}, S.wp.company), ` · 대상일 ${f.as_of_date || S.wp.period_end} · ${S.wp.content.title}`);
+  put(crumb, h("a", { href: `#eng-${S.wp.engagement_id}-fs`, title: "이 보고기간의 재무제표로" }, h("b", {}, S.wp.company)),
+    ` · 대상일 ${f.as_of_date || S.wp.period_end} · ${S.wp.content.title}`);
   const proc = h("span", { class: "chip " + (st.procedure === "수행 완료" ? (st.procedure_ready ? "ok" : "warn") : "") },
     h("i", {}, "수행"), st.procedure, st.blocking_count ? ` · 남은 작업 ${st.blocking_count}` : "");
   const fnd = h("span", { class: "chip " + (st.findings_unresolved ? "mark" : "ok") }, h("i", {}, "발견 사항"), st.findings);
@@ -710,11 +715,13 @@ function applyComputed() {
   if (la && c.linked?.available) {
     const L = c.linked;
     put(la, L.rows.length ? h("div", { class: "tablewrap" }, h("table", { class: "ledger" },
-      h("thead", {}, h("tr", {}, ...["계정", "표시 항목", "전기말", "수정후", "증감액", "증감률"].map((x) => h("th", {}, x)))),
+      h("thead", {}, h("tr", {}, ...["계정", "표시 항목", "전기말", "당기 (회사)", "수정분개", "수정후", "증감액", "증감률"].map((x) => h("th", {}, x)))),
       h("tbody", {}, ...L.rows.map((r) => h("tr", {},
         h("td", {}, h("a", { href: `#eng-${S.wp.engagement_id}-acct-${r.code}` }, `${r.code} ${r.name}`)), h("td", {}, r.fs_line),
-        h("td", { class: "num" }, fmt(r.prior)), h("td", { class: "num" }, fmt(r.adjusted)), ...chgCells(r.change, r.change_rate, r.prior)))),
+        h("td", { class: "num" }, fmt(r.prior)), h("td", { class: "num" }, fmt(r.unadjusted)), h("td", { class: "num" }, fmt(r.adjustment)),
+        h("td", { class: "num" }, fmt(r.adjusted)), ...chgCells(r.change, r.change_rate, r.prior)))),
       h("tfoot", {}, h("tr", {}, h("td", { colspan: 2 }, "합계 (참조값)"), h("td", { class: "num" }, fmt(L.prior)),
+        h("td", { class: "num" }, fmt(L.unadjusted)), h("td", { class: "num" }, fmt(L.adjustment)),
         h("td", { class: "num" }, fmt(L.adjusted)), ...chgCells(L.change, L.change_rate, L.prior))))) :
       h("p", { class: "sub", style: "margin:0" }, "선택한 계정과목이 없습니다."));
   }
@@ -813,43 +820,124 @@ function chgCells(amount, rate, prior) {
       chgText(rate, "%") ?? (prior === 0 && amount ? "신규" : "—")),
   ];
 }
-const LEDGER_STEPS = [["fs", "재무제표"], ["tb", "정산표"], ["acct", "계정원장"], ["je", "분개장"]];
+const LEDGER_STEPS = [["input", "자료 입력"], ["fs", "재무제표"], ["tb", "정산표"], ["acct", "계정원장"], ["je", "분개장"]];
 
 async function ledgerView(eid, view, arg) {
   S.wp = null; S.dirty = false; renderTop();
   const res = await api("GET", `/api/engagements/${eid}/ledger`);
-  const E = res.engagement;
-  put($("#crumb"), h("b", {}, E.company), ` · 보고기간 종료일 ${E.period_end} · ${E.currency}·${E.unit}`);
+  const E = res.engagement, L = res.ledger, C = res.computed;
+  const base = `#eng-${eid}`;
+  put($("#crumb"), h("a", { href: `#co-${E.company_id}` }, h("b", {}, E.company)), ` · 보고기간 종료일 ${E.period_end} · ${E.currency}·${E.unit}`);
   put($("#chips"), E.is_sample ? h("span", { class: "chip sample" }, "가상 데이터") : null,
-    res.ledger ? h("span", { class: "chip" }, h("i", {}, "자료"), res.ledger._source) : null);
-  if (!res.ledger) {
-    put($("#app"), h("section", { class: "paper step" }, h("h1", {}, "정산표 없음"), h("p", {}, "이 감사건에는 정산표·분개장이 없습니다."), h("a", { href: "#" }, "조서 목록으로")));
-    return;
-  }
-  const L = res.ledger, C = res.computed;
+    h("span", { class: "chip " + (C.ready ? "ok" : "warn") }, C.ready ? "정산표 준비됨" : "자료 입력 필요"));
+  put($("#actions"), h("a", { class: "btn", href: `${base}-aje` }, `수정분개 ${L.adjustments?.length || 0}`),
+    h("a", { class: "btn", href: `${base}-wps` }, `조서 ${E.workpapers.length}`));
+  // 자료가 다 들어오기 전에는 자료 입력부터
+  if (!C.ready && !["input", "aje", "wps"].includes(view)) view = "input";
   const byCode = Object.fromEntries(L.accounts.map((a) => [a.code, a]));
   const wpsFor = (codes) => E.workpapers.filter((w) => w.linked_accounts.some((c) => codes.includes(c)));
-  const base = `#eng-${eid}`;
-  const trail = [h("a", { href: base }, "재무제표")];
+  const trail = [h("a", { href: `${base}-fs` }, "재무제표")];
   let body;
-  if (view === "fs") body = fsView();
+  if (view === "input") body = inputView();
+  else if (view === "fs") body = fsView();
   else if (view === "tb") body = tbView(arg);
   else if (view === "acct") body = await acctView(arg);
+  else if (view === "aje") body = ajeView();
+  else if (view === "wps") body = wpsView();
   else body = jeView(arg);
+  const stepOn = view === "aje" ? "tb" : view;
   put($("#app"), h("div", { class: "ledger-page" },
-    h("nav", { class: "flow", "aria-label": "탐색 단계" }, ...LEDGER_STEPS.map(([k, label], i) => [
-      i ? h("span", { class: "arrow", "aria-hidden": "true" }, "→") : null,
-      k === view || k === "acct" ? h("span", { class: "flowstep" + (k === view ? " on" : ""), title: k === "acct" ? "정산표에서 계정과목을 고르면 열립니다" : null }, label) :
-        h("a", { class: "flowstep", href: k === "fs" ? base : `${base}-${k}` }, label)])),
-    h("div", { class: "trail sub" }, ...trail.flatMap((t, i) => (i ? [" › ", t] : [t]))),
+    h("nav", { class: "flow", "aria-label": "탐색 단계" }, ...LEDGER_STEPS.map(([k, label], i) => {
+      const off = (k === "acct") || (k === "je" && !C.has_journal && !(L.adjustments || []).length) || (!C.ready && !["input"].includes(k));
+      return [i ? h("span", { class: "arrow", "aria-hidden": "true" }, "→") : null,
+        k === stepOn || off ? h("span", { class: "flowstep" + (k === stepOn ? " on" : "") + (off && k !== stepOn ? " off" : ""),
+          title: k === "acct" ? "정산표에서 계정과목을 고르면 열립니다" : off ? "자료를 먼저 입력하세요" : null }, label) :
+          h("a", { class: "flowstep", href: `${base}-${k}` }, label)];
+    })),
+    ["fs", "input", "wps"].includes(view) ? null : h("div", { class: "trail sub" }, ...trail.flatMap((t, i) => (i ? [" › ", t] : [t]))),
     body,
-    h("p", { class: "sub" }, "정산표·분개장은 감사건 단위 참조 자료입니다. 금액은 계정의 정상 잔액 방향 기준이며, 손익 계정의 '전기말' 열은 전기 금액(비교용)입니다.")));
+    h("p", { class: "sub" }, "금액은 계정의 정상 잔액 방향 기준입니다(차감 계정은 음수). 손익 계정의 '전기말'은 전기 금액(비교용)입니다. 정산표 금액은 참조 자료이며 조서 입력값을 대신하지 않습니다.")));
 
   function wpLinks(codes, short) {
     const wps = wpsFor(codes);
     return wps.length ? h("div", { class: "chips" }, ...wps.map((w) => h("a", { class: "chip", href: `#wp-${w.id}`, title: w.title },
       short ? w.wp_no || "조서" : `${w.wp_no || "조서"} ${w.title}`))) :
-      h("span", { class: "sub" }, "연결된 조서 없음");
+      h("span", { class: "sub" }, "없음");
+  }
+  function makeBtn(codes, label) {
+    return h("button", { class: "btn small", type: "button", onclick: () => createWpDialog(eid, res, codes, label) }, "조서 만들기");
+  }
+  function issuesBox() {
+    const items = C.issues;
+    return h("div", { class: "block" }, h("h2", {}, "확인할 것"),
+      items.length ? h("ul", { class: "items" }, ...items.map((it) => h("li", { class: "item " + it.level }, h("span", {}, it.message)))) :
+        h("p", { class: "sub", style: "margin:0" }, "재무제표와 시산표가 맞습니다. 확인할 것이 없습니다."));
+  }
+
+  function inputView() {
+    trail.length = 0;
+    const card = (kind, title, what) => {
+      const src = L.sources?.[kind];
+      const n = kind === "fs" ? L.fs.length : L.accounts.length;
+      const file = h("input", { type: "file", accept: ".xlsx" });
+      const err = h("div", { class: "err" });
+      const up = async () => {
+        err.textContent = "";
+        const f = file.files[0];
+        if (!f) { err.textContent = "파일을 고르세요."; return; }
+        try {
+          const r = await fetch(`/api/engagements/${eid}/upload/${kind}`, { method: "POST", body: await f.arrayBuffer(),
+            headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(f.name) } });
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            const d = j.detail;
+            put(err, typeof d === "string" ? d : [d?.message, ...(d?.errors || [])].filter(Boolean).map((m) => h("div", {}, m)));
+            return;
+          }
+          toast(`${title} 올림`); route();
+        } catch (e) { err.textContent = e.message; }
+      };
+      return h("div", { class: "card" + (n ? "" : " attn") },
+        h("div", { class: "card-head" }, h("b", {}, title),
+          h("span", { class: "chip " + (n ? "ok" : "warn") }, n ? `${n}행 입력됨` : "아직 없음")),
+        h("p", { class: "sub", style: "margin:0" }, what),
+        src ? h("p", { class: "sub", style: "margin:0" }, `올린 파일: ${decodeURIComponent(src.filename || "") || "(이름 없음)"} · ${src.uploaded_at?.replace("T", " ")}`) :
+          n ? h("p", { class: "sub", style: "margin:0" }, "가상 데이터로 들어가 있음") : null,
+        h("div", { class: "chips" }, h("a", { class: "btn small", href: `/api/templates/${kind}.xlsx` }, "양식 내려받기"), file,
+          h("button", { class: "btn small primary", type: "button", onclick: up }, n ? "다시 올리기 (바꿔 넣음)" : "올리기")),
+        err);
+    };
+    const fsNames = L.fs.map((r) => r.name);
+    const unm = C.unmapped.map((c) => byCode[c]);
+    const sel = {};
+    const mapBox = unm.length ? h("div", { class: "block" }, h("h2", {}, `표시 항목에 연결되지 않은 계정과목 ${unm.length}개`),
+      h("p", { class: "sub", style: "margin:0" }, "재무제표의 어느 표시 항목에 들어가는지 고르세요. 연결해야 정산표에 들어갑니다."),
+      h("div", { class: "tablewrap" }, h("table", { class: "ledger" },
+        h("thead", {}, h("tr", {}, ...["계정과목", "시산표에 적힌 표시 항목", "연결할 표시 항목"].map((x) => h("th", {}, x)))),
+        h("tbody", {}, ...unm.map((a) => {
+          sel[a.code] = h("select", {}, h("option", { value: "" }, "선택"), ...fsNames.map((n) => h("option", { value: n }, n)));
+          return h("tr", {}, h("td", { class: "nowrap" }, `${a.code} ${a.name}`), h("td", {}, a.fs_line || "(빈칸)"), h("td", {}, sel[a.code]));
+        })))),
+      h("div", {}, h("button", { class: "btn primary", type: "button", onclick: async () => {
+        const body = Object.fromEntries(Object.entries(sel).filter(([, s]) => s.value).map(([c, s]) => [c, s.value]));
+        if (!Object.keys(body).length) { toast("연결할 표시 항목을 고르세요."); return; }
+        await api("POST", `/api/engagements/${eid}/mapping`, body); toast("연결함"); route();
+      } }, "연결 저장"))) : null;
+    const eqLines = L.fs.filter((r) => r.statement === "재무상태표" && r.category === "자본").map((r) => r.name);
+    const niSel = h("select", {}, h("option", { value: "" }, "자동(이익잉여금)"), ...eqLines.map((n) => h("option", { value: n }, n)));
+    niSel.value = L.net_income_line || "";
+    niSel.addEventListener("change", async () => { await api("POST", `/api/engagements/${eid}/settings`, { net_income_line: niSel.value }); route(); });
+    return h("section", { class: "paper step" },
+      h("h1", {}, "자료 입력"),
+      h("p", { class: "intro" }, "회사의 재무제표와 시산표(감사 전)를 양식에 맞춰 올리면 정산표가 만들어집니다. 감사인 수정분개는 정산표 단계에서 입력합니다."),
+      h("div", { class: "cards two" },
+        card("fs", "재무제표", "표시 항목별 전기·당기 금액. 소계·합계 행은 넣지 않습니다."),
+        card("tb", "시산표", "계정과목별 전기말·당기 잔액과 표시 항목.")),
+      mapBox,
+      L.fs.length ? h("div", { class: "fields" }, fieldBox("당기순이익을 더해 보여줄 자본 항목", niSel,
+        { help: "시산표의 이익잉여금은 마감 전 잔액이라 재무상태표에서는 당기순이익을 더합니다." })) : null,
+      issuesBox(),
+      C.ready ? h("div", {}, h("a", { class: "btn primary", href: `${base}-fs` }, "재무제표 보기 →")) : null);
   }
 
   function fsView() {
@@ -858,111 +946,167 @@ async function ledgerView(eid, view, arg) {
       const cats = [...new Set(lines.map((l) => l.category))];
       const rows = [];
       for (const cat of cats) {
-        rows.push(h("tr", { class: "cat" }, h("td", { colspan: 7 }, cat)));
+        rows.push(h("tr", { class: "cat" }, h("td", { colspan: 10 }, cat)));
         for (const l of lines.filter((x) => x.category === cat)) {
+          const fd = [l.fs_vs_tb_current, l.fs_vs_tb_prior];
+          const ok = fd.every((v) => v === 0);
           rows.push(h("tr", {},
-            h("td", {}, h("a", { href: `${base}-tb-${encodeURIComponent(l.name)}` }, l.name),
-              l.includes_net_income ? h("small", { class: "sub" }, ` (당기순이익 ${won(C.income.net_income)} 포함)`) : null),
-            h("td", { class: "num" }, won(l.prior)), h("td", { class: "num" }, won(l.current)),
+            h("td", { class: "nowrap" }, h("a", { href: `${base}-tb-${encodeURIComponent(l.name)}` }, l.name),
+              l.includes_net_income ? h("small", { class: "sub" }, " (당기순이익 포함)") : null),
+            h("td", { class: "num" }, won(l.prior)), h("td", { class: "num" }, won(l.reported_current)),
+            h("td", { class: "num" }, l.adjustment ? chgText(l.adjustment) : won(l.adjustment)), h("td", { class: "num strong" }, won(l.current)),
             ...chgCells(l.change, l.change_rate, l.prior),
-            h("td", { class: "num sub" }, `${l.accounts.length}개`), h("td", {}, wpLinks(l.accounts))));
+            h("td", { class: ok ? "okc" : "badc", title: "회사 재무제표 금액 − 시산표 합계 (당기 / 전기)" },
+              ok ? "일치" : `당기 ${won(l.fs_vs_tb_current)} / 전기 ${won(l.fs_vs_tb_prior)}`),
+            h("td", {}, wpLinks(l.accounts, true)), h("td", {}, l.accounts.length ? makeBtn(l.accounts, l.name) : null)));
         }
       }
       return rows;
     };
     const bs = C.bs_totals, inc = C.income;
-    const tot = (label, p, c, chg, rate) => h("tr", { class: "tot" }, h("td", {}, label), h("td", { class: "num" }, won(p)),
-      h("td", { class: "num" }, won(c)), ...chgCells(chg, rate, p), h("td"), h("td"));
+    const tot = (label, p, rc, c, chg, rate) => h("tr", { class: "tot" }, h("td", {}, label), h("td", { class: "num" }, won(p)),
+      h("td", { class: "num" }, won(rc)), h("td"), h("td", { class: "num" }, won(c)), ...chgCells(chg, rate, p), h("td"), h("td"), h("td"));
     const check = (label, p, c) => h("tr", { class: "tot" + (p !== 0 || c !== 0 ? " bad" : "") }, h("td", {}, label),
-      h("td", { class: "num" }, won(p)), h("td", { class: "num" }, won(c)), h("td", { colspan: 4 }, p === 0 && c === 0 ? "일치" : "불일치"));
-    const head = h("thead", {}, h("tr", {}, ...["표시 항목", "전기", "당기", "증감액", "증감률", "계정", "관련 조서"].map((x) => h("th", {}, x))));
-    return h("div", { class: "grid2" },
+      h("td", { class: "num" }, won(p)), h("td"), h("td"), h("td", { class: "num" }, won(c)), h("td", { colspan: 5 }, p === 0 && c === 0 ? "일치" : "불일치"));
+    const head = () => h("thead", {}, h("tr", {}, ...["표시 항목", "전기", "당기 (회사)", "수정분개", "수정후", "증감액", "증감률", "시산표 대사", "관련 조서", ""].map((x) => h("th", {}, x))));
+    return h("div", { class: "block" },
       h("section", { class: "paper step" }, h("h1", {}, "재무상태표"),
-        h("p", { class: "sub", style: "margin:0" }, "표시 항목을 누르면 그 항목을 이루는 정산표 계정과목으로 내려갑니다."),
-        h("div", { class: "tablewrap" }, h("table", { class: "ledger" }, head, h("tbody", {}, ...sec("재무상태표"),
-          tot("자산 총계", bs.prior.자산, bs.current.자산, bs.change.자산, bs.change_rate.자산),
-          tot("부채와자본 총계", bs.prior.부채와자본, bs.current.부채와자본, bs.change.부채와자본, bs.change_rate.부채와자본),
+        h("p", { class: "sub", style: "margin:0" }, "당기(회사) + 수정분개 = 수정후. 증감 = 수정후 − 전기. 표시 항목을 누르면 정산표 계정과목으로 내려가고, '조서 만들기'로 그 항목의 조서를 만듭니다."),
+        h("div", { class: "tablewrap" }, h("table", { class: "ledger wide" }, head(), h("tbody", {}, ...sec("재무상태표"),
+          tot("자산 총계", bs.prior.자산, bs.reported_current.자산, bs.current.자산, bs.change.자산, bs.change_rate.자산),
+          tot("부채와자본 총계", bs.prior.부채와자본, bs.reported_current.부채와자본, bs.current.부채와자본, bs.change.부채와자본, bs.change_rate.부채와자본),
           check("자산 − (부채+자본)", bs.prior.diff, bs.current.diff))))),
       h("section", { class: "paper step" }, h("h1", {}, "손익계산서"),
-        h("div", { class: "tablewrap" }, h("table", { class: "ledger" }, head.cloneNode(true), h("tbody", {}, ...sec("손익계산서"),
-          tot("당기순이익", inc.net_income_prior, inc.net_income, inc.net_income_change, inc.net_income_change_rate))))));
+        h("div", { class: "tablewrap" }, h("table", { class: "ledger wide" }, head(), h("tbody", {}, ...sec("손익계산서"),
+          tot("당기순이익", inc.net_income_prior, inc.net_income_reported, inc.net_income, inc.net_income_change, inc.net_income_change_rate))))),
+      C.issues.length ? h("section", { class: "paper step" }, issuesBox()) : null);
   }
 
   function tbView(line) {
-    const accts = line ? L.accounts.filter((a) => a.fs_line === line) : L.accounts;
-    if (line) trail.push(h("span", {}, line));
-    else trail.push(h("span", {}, "정산표 전체"));
+    const accts = line ? L.accounts.filter((a) => C.accounts[a.code].fs_line === line) : L.accounts;
+    trail.push(h("span", {}, line || "정산표 전체"));
+    const jcol = C.has_journal;
     const rows = accts.map((a) => {
       const c = C.accounts[a.code];
-      const ok = c.unadjusted_vs_journal === 0 && c.adjustment_vs_journal === 0 && c.adjusted_check === 0;
       return h("tr", {},
-        h("td", { class: "nowrap" }, h("a", { href: `${base}-acct-${a.code}` }, `${a.code} ${a.name}`)), h("td", { class: "sub" }, `${a.fs_line} · ${a.category}`),
-        h("td", { class: "num" }, won(c.prior)), h("td", { class: "num" }, won(c.unadjusted)), h("td", { class: "num" }, won(c.adjustment)),
-        h("td", { class: "num" }, won(c.adjusted)), ...chgCells(c.change, c.change_rate, c.prior),
-        h("td", { class: ok ? "okc" : "badc", title: "기초 + 일반 분개 = 수정전, 수정분개 합계 = 수정분개, 수정전 + 수정분개 = 수정후" },
-          ok ? "일치" : `수정전 차이 ${won(c.unadjusted_vs_journal)} / 수정분개 차이 ${won(c.adjustment_vs_journal)}`),
-        h("td", {}, wpLinks([a.code], true)));
+        h("td", { class: "nowrap" }, h("a", { href: `${base}-acct-${a.code}` }, `${a.code} ${a.name}`)),
+        h("td", { class: "sub" }, c.mapped ? `${c.fs_line} · ${c.category}` : h("span", { class: "badc" }, "표시 항목 미연결")),
+        h("td", { class: "num" }, won(c.prior)), h("td", { class: "num" }, won(c.unadjusted)),
+        h("td", { class: "num" }, c.adjustment ? chgText(c.adjustment) : won(c.adjustment)), h("td", { class: "num strong" }, won(c.adjusted)),
+        ...chgCells(c.change, c.change_rate, c.prior),
+        jcol ? h("td", { class: c.unadjusted_vs_journal === 0 ? "okc" : "badc", title: "기초 + 분개장 일반 분개 = 당기(회사 시산표)" },
+          c.unadjusted_vs_journal === 0 ? "일치" : `차이 ${won(c.unadjusted_vs_journal)}`) : null,
+        h("td", {}, wpLinks([a.code], true)), h("td", {}, c.mapped ? makeBtn([a.code], `${a.code} ${a.name}`) : null));
     });
     const ts = line ? C.fs_lines.find((l) => l.name === line)?.tb_sums : null;
     const foot = ts ? h("tr", { class: "tot" }, h("td", { colspan: 2 }, `${line} 합계`), ...["prior", "unadjusted", "adjustment", "adjusted"].map((k) =>
-      h("td", { class: "num" }, won(ts[k]))), ...chgCells(ts.change, ts.change_rate, ts.prior), h("td"), h("td")) : null;
+      h("td", { class: "num" }, won(ts[k]))), ...chgCells(ts.change, ts.change_rate, ts.prior), jcol ? h("td") : null, h("td"), h("td")) : null;
     const tb = C.tb_totals;
     return h("section", { class: "paper step" },
       h("div", { class: "block-head" }, h("h1", {}, line ? `정산표 — ${line}` : "정산표"),
-        line ? h("a", { class: "btn small", href: `${base}-tb` }, "정산표 전체") : null),
-      h("p", { class: "sub", style: "margin:0" }, "증감액 = 수정후 − 전기말, 증감률 = 증감액 ÷ 전기말. ▲ 증가, ▼ 감소. '분개장 대조'는 분개장에서 다시 쌓은 금액과 정산표가 맞는지입니다. 계정과목을 누르면 계정원장으로 내려갑니다."),
+        h("div", { class: "chips" }, line ? h("a", { class: "btn small", href: `${base}-tb` }, "정산표 전체") : null,
+          h("a", { class: "btn small", href: `${base}-aje` }, "수정분개 입력"))),
+      h("p", { class: "sub", style: "margin:0" }, "당기(회사 시산표) + 수정분개 = 수정후. 증감액 = 수정후 − 전기말, 증감률 = 증감액 ÷ 전기말. ▲ 증가, ▼ 감소. 계정과목을 누르면 계정원장으로 내려갑니다."),
       h("div", { class: "tablewrap" }, h("table", { class: "ledger wide" },
-        h("thead", {}, h("tr", {}, ...["계정과목", "표시 항목 · 분류", "전기말", "수정전", "수정분개", "수정후", "증감액", "증감률", "분개장 대조", "관련 조서"].map((x) => h("th", {}, x)))),
+        h("thead", {}, h("tr", {}, ...["계정과목", "표시 항목 · 분류", "전기말", "당기 (회사)", "수정분개", "수정후", "증감액", "증감률",
+          ...(jcol ? ["분개장 대조"] : []), "관련 조서", ""].map((x) => h("th", {}, x)))),
         h("tbody", {}, ...rows), foot ? h("tfoot", {}, foot) : null)),
       line ? null : h("div", { class: "totals" },
-        ...[["unadjusted", "수정전"], ["adjusted", "수정후"]].flatMap(([k, lab]) => [
+        ...[["unadjusted", "당기 (회사)"], ["adjusted", "수정후"]].flatMap(([k, lab]) => [
           h("div", { class: "total" }, h("span", {}, `${lab} 차변 합계`), h("strong", {}, won(tb[k].debit))),
           h("div", { class: "total" }, h("span", {}, `${lab} 대변 합계`), h("strong", {}, won(tb[k].credit))),
           h("div", { class: "total" + (tb[k].diff ? " nz" : "") }, h("span", {}, `${lab} 차변 − 대변`), h("strong", {}, won(tb[k].diff)))])));
   }
 
+  function ajeView() {
+    trail.push(h("a", { href: `${base}-tb` }, "정산표"), h("span", {}, "수정분개"));
+    const list = JSON.parse(JSON.stringify(L.adjustments || []));
+    const opts = L.accounts.map((a) => [a.code, `${a.code} ${a.name}`]);
+    const box = h("div", { class: "cards" });
+    const draw = () => put(box, ...(list.length ? list.map((a, ai) => {
+      const g = C.journal[a.je_no];
+      const inp = (obj, key, attrs = {}) => {
+        const el = h("input", { type: "text", ...attrs }); el.value = obj[key] ?? "";
+        el.addEventListener("input", () => { obj[key] = el.value; dirty(); }); return el;
+      };
+      const pick = (ln) => {
+        const el = h("select", {}, h("option", { value: "" }, "계정 선택"), ...opts.map(([v, t]) => h("option", { value: v }, t)));
+        el.value = ln.code || ""; el.addEventListener("change", () => { ln.code = el.value; dirty(); }); return el;
+      };
+      return h("div", { class: "card" },
+        h("div", { class: "card-head" }, h("b", {}, `${a.je_no || "(전표번호 없음)"} ${a.description || ""}`),
+          h("div", { class: "chips" }, g ? h("span", { class: "chip " + (g.diff === 0 ? "ok" : "mark") }, g.diff === 0 ? "차대 일치 (저장본)" : `차대 차이 ${won(g.diff)} (저장본)`) : null,
+            h("button", { class: "btn link", type: "button", onclick: () => { list.splice(ai, 1); dirty(); draw(); } }, "삭제"))),
+        h("div", { class: "fields" }, fieldBox("전표번호", inp(a, "je_no", { placeholder: "예: A002" })), fieldBox("일자", inp(a, "date", { type: "date" })),
+          fieldBox("적요", inp(a, "description"), { wide: true })),
+        h("div", { class: "tablewrap" }, h("table", { class: "ledger" },
+          h("thead", {}, h("tr", {}, ...["계정과목", "차변", "대변", ""].map((x) => h("th", {}, x)))),
+          h("tbody", {}, ...a.lines.map((ln, li) => h("tr", {}, h("td", {}, pick(ln)),
+            h("td", {}, inp(ln, "debit", { class: "amount", inputmode: "numeric" })), h("td", {}, inp(ln, "credit", { class: "amount", inputmode: "numeric" })),
+            h("td", {}, h("button", { class: "btn link", type: "button", onclick: () => { a.lines.splice(li, 1); dirty(); draw(); } }, "삭제"))))))),
+        h("div", {}, h("button", { class: "btn small", type: "button", onclick: () => { a.lines.push({ code: "", debit: "", credit: "" }); dirty(); draw(); } }, "+ 라인")));
+    }) : [h("p", { class: "sub" }, "감사인 수정분개가 없습니다. 없으면 수정후 = 당기(회사)입니다.")]));
+    const save = h("button", { class: "btn primary", type: "button", onclick: async () => {
+      for (const a of list) for (const ln of a.lines) for (const k of ["debit", "credit"]) ln[k] = String(ln[k] ?? "").replace(/,/g, "").trim();
+      try { await api("POST", `/api/engagements/${eid}/adjustments`, { adjustments: list }); S.dirty = false; toast("수정분개 저장"); route(); }
+      catch (e) { toast(e.message); }
+    } }, "저장");
+    const dirty = () => { S.dirty = true; save.textContent = "저장 ●"; };
+    draw();
+    return h("section", { class: "paper step" },
+      h("h1", {}, "감사인 수정분개"),
+      h("p", { class: "sub", style: "margin:0" }, "여기 적은 수정분개가 정산표의 '수정분개' 열이 됩니다. 저장하면 전표별 차대 합계와 정산표가 다시 계산됩니다. 금액은 원 단위."),
+      box,
+      h("div", { class: "chips" }, h("button", { class: "btn", type: "button", onclick: () => {
+        list.push({ id: newId("a"), je_no: "", date: E.period_end, description: "", lines: [{ code: "", debit: "", credit: "" }, { code: "", debit: "", credit: "" }] });
+        dirty(); draw();
+      } }, "+ 수정분개 추가"), save),
+      issuesBox());
+  }
+
   async function acctView(code) {
     const a = byCode[code];
-    if (!a) return h("section", { class: "paper step" }, h("p", { class: "err" }, `정산표에 없는 계정과목: ${code}`));
-    trail.push(h("a", { href: `${base}-tb-${encodeURIComponent(a.fs_line)}` }, a.fs_line), h("span", {}, `${a.code} ${a.name}`));
+    if (!a) return h("section", { class: "paper step" }, h("p", { class: "err" }, `시산표에 없는 계정과목: ${code}`));
+    const c = C.accounts[code];
+    trail.push(c.mapped ? h("a", { href: `${base}-tb-${encodeURIComponent(c.fs_line)}` }, c.fs_line) : h("span", {}, "표시 항목 미연결"), h("span", {}, `${a.code} ${a.name}`));
     const G = await api("GET", `/api/engagements/${eid}/ledger/accounts/${encodeURIComponent(code)}`);
-    const c = G.calc;
-    const rows = [h("tr", { class: "cat" }, h("td", {}, ""), h("td", {}, ""), h("td", {}, ""), h("td", {}, c.is_bs ? "기초 잔액 (전기말)" : "기초 (손익 계정은 0)"),
-      h("td"), h("td"), h("td", { class: "num" }, won(c.opening)))];
+    const rows = [h("tr", { class: "cat" }, h("td"), h("td"), h("td"), h("td", {}, G.base_label), h("td"), h("td"), h("td", { class: "num" }, won(G.base)))];
     for (const ln of G.lines) rows.push(h("tr", { class: ln.kind === "수정분개" ? "adj" : "" },
       h("td", {}, ln.date), h("td", {}, h("a", { href: `${base}-je-${encodeURIComponent(ln.je_no)}` }, ln.je_no)), h("td", { class: "sub" }, ln.kind),
       h("td", {}, ln.description), h("td", { class: "num" }, ln.debit ? won(ln.debit) : ""), h("td", { class: "num" }, ln.credit ? won(ln.credit) : ""),
       h("td", { class: "num" }, won(ln.balance))));
+    const box = (label, v, cls = "") => h("div", { class: "total " + cls }, h("span", {}, label), h("strong", {}, v));
+    const dir = (v) => (v > 0 ? "chgbox up" : v < 0 ? "chgbox down" : "");
     return h("section", { class: "paper step" },
-      h("h1", {}, `계정원장 — ${a.code} ${a.name}`),
+      h("div", { class: "block-head" }, h("h1", {}, `계정원장 — ${a.code} ${a.name}`), c.mapped ? makeBtn([a.code], `${a.code} ${a.name}`) : null),
       h("div", { class: "totals" },
-        h("div", { class: "total" }, h("span", {}, c.is_bs ? "전기말" : "전기 금액(비교용)"), h("strong", {}, won(c.prior))),
-        h("div", { class: "total" }, h("span", {}, "정산표 수정후"), h("strong", {}, won(c.adjusted))),
-        h("div", { class: "total chgbox" + (c.change > 0 ? " up" : c.change < 0 ? " down" : "") }, h("span", {}, "증감액"), h("strong", {}, chgText(c.change) ?? "미입력")),
-        h("div", { class: "total chgbox" + (c.change_rate > 0 ? " up" : c.change_rate < 0 ? " down" : "") }, h("span", {}, "증감률"),
-          h("strong", {}, chgText(c.change_rate, "%") ?? (c.prior === 0 && c.change ? "신규" : "—"))),
-        h("div", { class: "total" }, h("span", {}, "원장 기말 (분개 누적)"), h("strong", {}, won(G.closing))),
-        h("div", { class: "total" + (G.closing_vs_adjusted ? " nz" : "") }, h("span", {}, "원장 기말 − 정산표 수정후"), h("strong", {}, won(G.closing_vs_adjusted)))),
-      h("div", { class: "block" }, h("h2", {}, "이 계정과목을 다루는 조서·명세서"), wpLinks([a.code])),
+        box(c.is_bs === false ? "전기 금액(비교용)" : "전기말", won(c.prior)), box("당기 (회사)", won(c.unadjusted)),
+        box("수정분개", c.adjustment ? chgText(c.adjustment) : won(c.adjustment)), box("수정후", won(c.adjusted)),
+        box("증감액", chgText(c.change) ?? "미입력", dir(c.change)),
+        box("증감률", chgText(c.change_rate, "%") ?? (c.prior === 0 && c.change ? "신규" : "—"), dir(c.change_rate ?? (c.prior === 0 ? c.change : null))),
+        box("원장 기말 − 수정후", won(G.closing_vs_adjusted), G.closing_vs_adjusted ? "nz" : "")),
+      h("div", { class: "block" }, h("h2", {}, "이 계정과목을 다루는 조서"), wpLinks([a.code])),
+      G.has_journal ? null : h("p", { class: "readonly-note" }, "분개장을 올리지 않아 기초부터 쌓은 원장은 없습니다. 당기(회사 시산표) 잔액에 수정분개만 더해 보여줍니다."),
       h("div", { class: "tablewrap" }, h("table", { class: "ledger" },
-        h("thead", {}, h("tr", {}, ...["일자", "전표", "구분", "적요", "차변", "대변", `잔액 (${c.side === 1 ? "차변" : "대변"} 기준)`].map((x) => h("th", {}, x)))),
-        h("tbody", {}, ...rows))),
-      h("p", { class: "sub", style: "margin:0" }, "전표 번호를 누르면 분개장의 해당 전표로 갑니다. 수정분개는 일반 분개 뒤에 표시합니다."));
+        h("thead", {}, h("tr", {}, ...["일자", "전표", "구분", "적요", "차변", "대변", `잔액 (${c.side === -1 ? "대변" : "차변"} 기준)`].map((x) => h("th", {}, x)))),
+        h("tbody", {}, ...rows))));
   }
 
   function jeView(no) {
     trail.push(h("span", {}, no ? `전표 ${no}` : "분개장 전체"));
     const groups = Object.values(C.journal).filter((g) => !no || g.je_no === no);
-    const lines = Object.fromEntries(L.journal.map((ln) => [ln.id, ln]));
+    const adjLines = (L.adjustments || []).flatMap((a) => a.lines.map((ln, i) => ({ ...ln, id: `${a.id}-${i + 1}`, description: a.description })));
+    const lines = Object.fromEntries([...(L.journal || []), ...adjLines].map((ln) => [ln.id, ln]));
     const rows = [];
     for (const g of groups) {
       g.lines.forEach((id, i) => {
-        const ln = lines[id], a = byCode[ln.code];
+        const ln = lines[id] || {}, a = byCode[ln.code];
         rows.push(h("tr", { class: (i === 0 ? "first " : "") + (g.kind === "수정분개" ? "adj" : "") },
           h("td", {}, i === 0 ? h("a", { href: `${base}-je-${encodeURIComponent(g.je_no)}` }, g.je_no) : ""), h("td", {}, i === 0 ? g.date : ""),
           h("td", { class: "sub" }, i === 0 ? g.kind : ""),
-          h("td", {}, h("a", { href: `${base}-acct-${ln.code}` }, a ? `${ln.code} ${a.name}` : `${ln.code} (정산표에 없음)`)),
-          h("td", {}, ln.description), h("td", { class: "num" }, ln.debit ? won(ln.debit) : ""), h("td", { class: "num" }, ln.credit ? won(ln.credit) : "")));
+          h("td", { class: "nowrap" }, a ? h("a", { href: `${base}-acct-${ln.code}` }, `${ln.code} ${a.name}`) : `${ln.code || "(빈칸)"} (시산표에 없음)`),
+          h("td", {}, ln.description), h("td", { class: "num" }, Number(String(ln.debit || 0).replace(/,/g, "")) ? won(Number(String(ln.debit).replace(/,/g, ""))) : ""),
+          h("td", { class: "num" }, Number(String(ln.credit || 0).replace(/,/g, "")) ? won(Number(String(ln.credit).replace(/,/g, ""))) : "")));
       });
       rows.push(h("tr", { class: "tot" + (g.diff ? " bad" : "") }, h("td", { colspan: 5 }, g.diff ? `${g.je_no} 차대 불일치 ${won(g.diff)}` : `${g.je_no} 합계`),
         h("td", { class: "num" }, won(g.debit)), h("td", { class: "num" }, won(g.credit))));
@@ -970,9 +1114,40 @@ async function ledgerView(eid, view, arg) {
     return h("section", { class: "paper step" },
       h("div", { class: "block-head" }, h("h1", {}, no ? `분개장 — 전표 ${no}` : "분개장"),
         no ? h("a", { class: "btn small", href: `${base}-je` }, "분개장 전체") : null),
-      h("p", { class: "sub", style: "margin:0" }, "계정과목을 누르면 그 계정원장으로 갑니다."),
+      h("p", { class: "sub", style: "margin:0" }, C.has_journal ? "계정과목을 누르면 그 계정원장으로 갑니다. 노란 줄은 감사인 수정분개입니다." :
+        "분개장을 올리지 않아 감사인 수정분개만 보입니다."),
       h("div", { class: "tablewrap" }, h("table", { class: "ledger" },
         h("thead", {}, h("tr", {}, ...["전표", "일자", "구분", "계정과목", "적요", "차변", "대변"].map((x) => h("th", {}, x)))),
         h("tbody", {}, ...rows))));
   }
+
+  function wpsView() {
+    return h("section", { class: "paper step" },
+      h("h1", {}, "조서"),
+      h("p", { class: "sub", style: "margin:0" }, "조서는 재무제표나 정산표의 '조서 만들기'에서 계정과목을 골라 만듭니다."),
+      E.workpapers.length ? h("div", { class: "eng" }, ...E.workpapers.map((w) => h("div", { class: "wpl" },
+        h("a", { href: `#wp-${w.id}` }, `${w.wp_no || "(조서번호 없음)"} ${w.title}`),
+        h("span", { class: "sub" }, w.linked_accounts.length ? w.linked_accounts.map((c) => `${c} ${byCode[c]?.name || "(시산표에 없음)"}`).join(", ") : "계정과목 미선택")))) :
+        h("p", {}, "아직 조서가 없습니다."),
+      C.ready ? h("div", {}, h("a", { class: "btn", href: `${base}-fs` }, "재무제표에서 만들기")) : null);
+  }
+}
+
+async function createWpDialog(eid, res, codes, label) {
+  const lines = new Set(codes.map((c) => res.computed.accounts[c]?.fs_line));
+  const fits = res.procedures.filter((p) => p.ledger_fs_lines.some((l) => lines.has(l)));
+  if (!fits.length) {
+    await modal("조서 만들기", [h("p", {}, `'${label}'에 맞는 절차 콘텐츠가 아직 없습니다. 지금은 현금및현금성자산·장단기금융상품 절차만 있습니다.`)], [["닫기", false]]);
+    return;
+  }
+  const sel = h("select", { id: "new-proc" }, ...fits.map((p) => h("option", { value: p.id }, `${p.title} (v${p.version})`)));
+  const names = codes.map((c) => `${c} ${res.computed.accounts[c]?.name || ""}`).join(", ");
+  const ok = await modal("조서 만들기", [h("p", {}, `대상 계정과목: ${names}`), fieldBox("실증절차", sel),
+    h("p", { class: "sub" }, "만든 조서의 '정산표 계정과목'에 위 계정이 선택된 상태로 열립니다. 금액은 참조로만 보여줍니다.")],
+    [["취소", false], ["만들기", true, "primary"]]);
+  if (!ok) return;
+  try {
+    const { id } = await api("POST", "/api/workpapers", { engagement_id: eid, procedure_id: sel.value, linked_accounts: codes });
+    location.hash = `#wp-${id}`;
+  } catch (e) { toast(e.message); }
 }
